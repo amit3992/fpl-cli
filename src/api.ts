@@ -130,6 +130,8 @@ async function authPost<T>(path: string, payload: unknown): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "X-Requested-With": "XMLHttpRequest",
+    "Referer": "https://fantasy.premierleague.com/",
+    "Origin": "https://fantasy.premierleague.com",
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const resp = await fetch(`${BASE_URL}${path}`, {
@@ -137,8 +139,14 @@ async function authPost<T>(path: string, payload: unknown): Promise<T> {
     headers,
     body: JSON.stringify(payload),
   });
-  if (!resp.ok) throw new Error(`FPL API POST ${path}: ${resp.status} ${resp.statusText}`);
-  return resp.json() as Promise<T>;
+  if (!resp.ok) {
+    let detail = "";
+    try { detail = " — " + await resp.text(); } catch { /* ignore */ }
+    throw new Error(`FPL API POST ${path}: ${resp.status} ${resp.statusText}${detail}`);
+  }
+  const text = await resp.text();
+  if (!text) return {} as T;
+  return JSON.parse(text) as T;
 }
 
 // --- Public API ---
@@ -156,6 +164,18 @@ export async function getCurrentGameweek(): Promise<number> {
   }
   for (const event of data.events) {
     if (event.is_next) return event.id;
+  }
+  return 1;
+}
+
+export async function getNextGameweek(): Promise<number> {
+  const data = await getBootstrap();
+  for (const event of data.events) {
+    if (event.is_next) return event.id;
+  }
+  // If no "next" (e.g., mid-gameweek), current + 1
+  for (const event of data.events) {
+    if (event.is_current) return event.id + 1;
   }
   return 1;
 }

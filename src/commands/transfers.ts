@@ -1,5 +1,3 @@
-import { createInterface } from "node:readline/promises";
-import { stdin, stdout } from "node:process";
 import chalk from "chalk";
 import * as api from "../api.js";
 import * as auth from "../auth.js";
@@ -141,7 +139,7 @@ export async function executeCommand(
   if (!pOut) printError(`Player not found: ${playerOut}`, asJson);
   if (!pIn) printError(`Player not found: ${playerIn}`, asJson);
 
-  const gameweek = await api.getCurrentGameweek();
+  const gameweek = await api.getNextGameweek();
   const squad = await api.getMySquad(teamId);
 
   let sellingPrice: number | undefined;
@@ -185,24 +183,6 @@ export async function executeCommand(
     console.log(chalk.dim("  To confirm, re-run with --confirm"));
     console.log();
     return;
-  }
-
-  // Confirm — prompt for safety
-  if (!asJson) {
-    console.log();
-    console.log(chalk.red.bold("  Confirm transfer:"));
-    console.log(`  OUT: ${pOut!.web_name} (£${(sellingPrice! / 10).toFixed(1)}m)`);
-    console.log(`  IN:  ${pIn!.web_name} (£${(pIn!.now_cost / 10).toFixed(1)}m)`);
-    console.log();
-
-    const rl = createInterface({ input: stdin, output: stdout });
-    const answer = await rl.question("  This is irreversible. Proceed? (y/N) ");
-    rl.close();
-
-    if (answer.trim().toLowerCase() !== "y") {
-      console.log(chalk.yellow("  Cancelled."));
-      return;
-    }
   }
 
   const result = await api.makeTransfer({
