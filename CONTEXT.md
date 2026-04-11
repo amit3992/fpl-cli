@@ -5,7 +5,8 @@
 ## Quick Reference
 
 ```
-fpl --json team                              # your squad
+fpl --json team                              # your current GW squad
+fpl --json team --next                       # your next GW squad
 fpl --json budget                            # bank, rank, chips
 fpl --json player <name>                     # player stats
 fpl --json news                              # squad injury news
@@ -15,6 +16,9 @@ fpl --json transfers suggest <name>          # replacement options
 fpl --json transfers hit <out> <in>          # hit value calculation
 fpl --json transfers execute <out> <in>      # dry-run transfer
 fpl --json transfers execute <out> <in> --confirm  # confirm transfer
+fpl --json captain <name>                    # set captain
+fpl --json vice-captain <name>               # set vice-captain
+fpl --json chip <name>                       # activate chip
 fpl --json doctor                            # connectivity check
 ```
 
@@ -24,7 +28,7 @@ fpl --json doctor                            # connectivity check
 - **ALWAYS use `--fields`** to limit output to the fields you need. Example: `fpl --json player Salah --fields "name,form,ppg,price"`.
 - **NEVER run `transfers execute --confirm` without first running a dry-run** (without `--confirm`) and inspecting the validation result.
 - **NEVER skip the dry-run step.** The FPL API does not support undoing transfers.
-- Authentication is required only for `transfers execute`. Read-only commands (`team`, `player`, `news`, `fixtures`, `transfers suggest`, `transfers hit`) work without login.
+- Authentication is required for `transfers execute`, `captain`, `vice-captain`, `chip`, and `team --next`. Read-only commands (`team`, `player`, `news`, `fixtures`, `transfers suggest`, `transfers hit`) work without login.
 
 ## Non-Interactive Setup
 
@@ -73,6 +77,11 @@ Exit code is always 1 on error.
 4. Dry-run the transfer: `fpl --json transfers execute Watkins Isak`
 5. Inspect the dry-run result — check for errors
 6. Confirm: `fpl --json transfers execute Watkins Isak --confirm`
+7. Verify: `fpl --json team --next` to confirm the change
+
+## Workflow: Gameweek Prep
+
+Use `/fpl-gameweek` to run a full gameweek review — it checks injuries, analyzes fixtures, suggests transfers, and recommends captain picks.
 
 ## Input Constraints
 
