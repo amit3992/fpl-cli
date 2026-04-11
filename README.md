@@ -4,12 +4,11 @@ Command-line tool for Fantasy Premier League. Designed for both human and AI age
 
 ## Install
 
-```bash
-# Add GitHub Packages registry for @amit3992 scope (one-time setup)
-echo '@amit3992:registry=https://npm.pkg.github.com' >> ~/.npmrc
+### Homebrew (macOS/Linux)
 
-# Install globally
-npm install -g @amit3992/fpl-cli
+```bash
+brew tap amit3992/tap
+brew install fpl-cli
 ```
 
 ### Development
