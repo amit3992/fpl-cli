@@ -1,19 +1,33 @@
 {
-  "name": "fpl-cli",
+  "name": "@amit3992/fpl-cli",
   "version": "0.1.0",
   "description": "Command-line tool for Fantasy Premier League",
   "type": "module",
   "bin": {
     "fpl": "./dist/index.js"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
   },
-  "keywords": ["fpl", "fantasy-premier-league", "cli"],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": ["fpl", "fantasy-premier-league", "fantasy-football", "premier-league", "cli"],
   "author": "Amit Patel",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/amit3992/fpl-cli.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "dependencies": {
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
