@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { Command } from "commander";
 import { initCommand } from "./commands/init.js";
 import { loginCommand, logoutCommand } from "./commands/login.js";
-import { teamCommand, budgetCommand } from "./commands/team.js";
+import { teamCommand, budgetCommand, captainCommand, chipCommand } from "./commands/team.js";
 import { playerCommand } from "./commands/player.js";
 import { newsCommand } from "./commands/news.js";
 import { fixturesCommand } from "./commands/fixtures.js";
@@ -46,8 +46,24 @@ program.command("logout")
 
 program.command("team")
   .description("Show your current FPL squad")
+  .option("--next", "Show next gameweek squad (reflects transfers, captain changes)")
   .option("--fields <fields>", "Comma-separated list of fields to include in JSON output")
-  .action((opts: { fields?: string }) => teamCommand(json(), opts.fields));
+  .action((opts: { fields?: string; next?: boolean }) => teamCommand(json(), opts.fields, opts.next));
+
+program.command("captain")
+  .description("Set captain for next gameweek")
+  .argument("<player>", "Player name")
+  .action((player: string) => captainCommand(player, false, json()));
+
+program.command("vice-captain")
+  .description("Set vice-captain for next gameweek")
+  .argument("<player>", "Player name")
+  .action((player: string) => captainCommand(player, true, json()));
+
+program.command("chip")
+  .description("Activate a chip (wildcard, freehit, bboost, 3xc)")
+  .argument("<name>", "Chip name: wildcard, freehit, bboost, 3xc")
+  .action((name: string) => chipCommand(name, json()));
 
 program.command("budget")
   .description("Show your bank balance, transfers, and chips")

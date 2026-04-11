@@ -39,8 +39,11 @@ Config is saved to `~/.config/fpl-cli/config.json`.
 ## Usage
 
 ```bash
-# Show your squad
+# Show your current GW squad
 fpl team
+
+# Show your next GW squad (reflects transfers, captain changes)
+fpl team --next
 
 # Show budget, rank, chips
 fpl budget
@@ -69,13 +72,20 @@ fpl transfers execute Watkins Isak
 # Execute for real
 fpl transfers execute Watkins Isak --confirm
 
+# Set captain / vice-captain
+fpl captain Salah
+fpl vice-captain Palmer
+
+# Activate a chip (wildcard, freehit, bboost, 3xc)
+fpl chip wildcard
+
 # Check config & connectivity
 fpl doctor
 ```
 
 ### Authentication
 
-Transfers require authentication:
+Transfers, captain changes, and chips require authentication:
 
 ```bash
 fpl login    # authenticate with FPL

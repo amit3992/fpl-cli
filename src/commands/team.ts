@@ -3,11 +3,15 @@ import * as api from "../api.js";
 import * as config from "../config.js";
 import { printJson, printError, makeTable } from "../output.js";
 import { filterFields } from "../fields.js";
+import { sanitizePlayerName } from "../validate.js";
 
 const POS = { 1: "GKP", 2: "DEF", 3: "MID", 4: "FWD" } as Record<number, string>;
 const STATUS = { a: "Available", d: "Doubtful", i: "Injured", s: "Suspended", u: "Unavailable" } as Record<string, string>;
+const CHIP_NAMES: Record<string, string> = {
+  wildcard: "Wildcard", freehit: "Free Hit", bboost: "Bench Boost", "3xc": "Triple Captain",
+};
 
-export async function teamCommand(asJson: boolean, fields?: string): Promise<void> {
+export async function teamCommand(asJson: boolean, fields?: string, next?: boolean): Promise<void> {
   const teamId = config.get("FPL_TEAM_ID");
   if (!teamId) printError("FPL Team ID not configured. Run: fpl init", asJson);
 
@@ -15,9 +19,16 @@ export async function teamCommand(asJson: boolean, fields?: string): Promise<voi
   const elements = new Map(bootstrap.elements.map((p) => [p.id, p]));
   const teams = new Map(bootstrap.teams.map((t) => [t.id, t.name]));
 
-  const picksData = await api.getMyTeam(teamId);
+  let picks: api.Pick[];
+  if (next) {
+    const myTeam = await api.getMySquad(teamId);
+    picks = myTeam.picks;
+  } else {
+    const picksData = await api.getMyTeam(teamId);
+    picks = picksData.picks;
+  }
 
-  const squad = picksData.picks.map((pick) => {
+  const squad = picks.map((pick) => {
     const p = elements.get(pick.element)!;
     return {
       name: p.web_name,
@@ -36,6 +47,7 @@ export async function teamCommand(asJson: boolean, fields?: string): Promise<voi
 
   if (asJson) { printJson(filterFields(squad, fields)); return; }
 
+  if (next) console.log(chalk.dim("  Next gameweek squad:"));
   const table = makeTable(["Name", "Pos", "Team", "Price", "Form", "PPG", "Pts", "Status", ""]);
   for (const p of squad) {
     const badge = p.is_captain ? " (C)" : p.is_vice_captain ? " (V)" : "";
@@ -49,6 +61,63 @@ export async function teamCommand(asJson: boolean, fields?: string): Promise<voi
     ]);
   }
   console.log(table.toString());
+}
+
+export async function captainCommand(playerName: string, vice: boolean, asJson: boolean): Promise<void> {
+  playerName = sanitizePlayerName(playerName, asJson);
+
+  const teamId = config.get("FPL_TEAM_ID");
+  if (!teamId) printError("FPL Team ID not configured. Run: fpl init", asJson);
+
+  const player = await api.getPlayerByName(playerName);
+  if (!player) printError(`Player not found: ${playerName}`, asJson);
+
+  const myTeam = await api.getMySquad(teamId);
+  const picks = myTeam.picks;
+
+  const inSquad = picks.find((p) => p.element === player!.id);
+  if (!inSquad) printError(`${player!.web_name} is not in your squad.`, asJson);
+
+  for (const pick of picks) {
+    if (vice) {
+      pick.is_vice_captain = pick.element === player!.id;
+    } else {
+      pick.is_captain = pick.element === player!.id;
+    }
+  }
+
+  await api.updateMyTeam(teamId, picks);
+
+  const label = vice ? "vice-captain" : "captain";
+  const data = { [label]: player!.web_name, status: "confirmed" };
+
+  if (asJson) { printJson(data); return; }
+  console.log(chalk.green(`  ${player!.web_name} set as ${label}.`));
+}
+
+export async function chipCommand(chipName: string, asJson: boolean): Promise<void> {
+  const teamId = config.get("FPL_TEAM_ID");
+  if (!teamId) printError("FPL Team ID not configured. Run: fpl init", asJson);
+
+  const validChips = ["wildcard", "freehit", "bboost", "3xc"];
+  const chip = chipName.toLowerCase();
+  if (!validChips.includes(chip)) {
+    printError(`Invalid chip: ${chipName}. Valid chips: ${validChips.join(", ")}`, asJson);
+  }
+
+  const myTeam = await api.getMySquad(teamId);
+
+  const chipStatus = myTeam.chips.find((c) => c.name === chip);
+  if (!chipStatus || chipStatus.status_for_entry !== "available") {
+    printError(`Chip "${CHIP_NAMES[chip] ?? chip}" is not available.`, asJson);
+  }
+
+  await api.updateMyTeam(teamId, myTeam.picks, chip);
+
+  const data = { chip: CHIP_NAMES[chip] ?? chip, status: "activated" };
+
+  if (asJson) { printJson(data); return; }
+  console.log(chalk.green(`  ${CHIP_NAMES[chip] ?? chip} activated.`));
 }
 
 export async function budgetCommand(asJson: boolean, fields?: string): Promise<void> {

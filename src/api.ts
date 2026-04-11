@@ -257,8 +257,31 @@ export async function getPlayerSummary(playerId: number): Promise<PlayerSummary>
   return get<PlayerSummary>(`/element-summary/${playerId}/`);
 }
 
-export async function getMySquad(teamId: string): Promise<{ picks: Pick[] }> {
-  return authGet<{ picks: Pick[] }>(`/my-team/${teamId}/`);
+export interface MyTeamData {
+  picks: Pick[];
+  chips: { status_for_entry: string; name: string }[];
+  transfers: {
+    bank: number;
+    limit: number | null;
+    made: number;
+    status: string;
+  };
+}
+
+export async function getMySquad(teamId: string): Promise<MyTeamData> {
+  return authGet<MyTeamData>(`/my-team/${teamId}/`);
+}
+
+export async function updateMyTeam(teamId: string, picks: Pick[], chip?: string | null): Promise<unknown> {
+  return authPost(`/my-team/${teamId}/`, {
+    chip: chip ?? null,
+    picks: picks.map((p) => ({
+      element: p.element,
+      position: p.position,
+      is_captain: p.is_captain,
+      is_vice_captain: p.is_vice_captain,
+    })),
+  });
 }
 
 export async function makeTransfer(opts: {
