@@ -43,6 +43,7 @@ export interface Event {
   id: number;
   is_current: boolean;
   is_next: boolean;
+  deadline_time: string;
 }
 
 export interface Bootstrap {
@@ -180,6 +181,12 @@ export async function getNextGameweek(): Promise<number> {
   return 1;
 }
 
+export async function getNextDeadline(): Promise<string | null> {
+  const data = await getBootstrap();
+  const gw = await getNextGameweek();
+  return data.events.find((e) => e.id === gw)?.deadline_time ?? null;
+}
+
 export async function getMyTeam(teamId: string, gameweek?: number): Promise<PicksData> {
   const gw = gameweek ?? await getCurrentGameweek();
   return get<PicksData>(`/entry/${teamId}/event/${gw}/picks/`);
@@ -270,6 +277,45 @@ export interface MyTeamData {
 
 export async function getMySquad(teamId: string): Promise<MyTeamData> {
   return authGet<MyTeamData>(`/my-team/${teamId}/`);
+}
+
+export interface LiveSquadState {
+  picks: Pick[];
+  bank: number;
+  team_value: number;
+  source: "live" | "historical";
+  caveat: string | null;
+  gameweek: number;
+  chips: { name: string; status: string }[];
+}
+
+export async function getLiveSquadState(teamId: string): Promise<LiveSquadState> {
+  const token = await getAccessToken();
+  if (token) {
+    const myTeam = await getMySquad(teamId);
+    const gameweek = await getNextGameweek();
+    const teamValue = myTeam.picks.reduce((sum, p) => sum + (p.selling_price ?? 0), 0);
+    return {
+      picks: myTeam.picks,
+      bank: myTeam.transfers.bank,
+      team_value: teamValue,
+      source: "live",
+      caveat: null,
+      gameweek,
+      chips: myTeam.chips.map((c) => ({ name: c.name, status: c.status_for_entry })),
+    };
+  }
+  const gameweek = await getCurrentGameweek();
+  const picksData = await getMyTeam(teamId, gameweek);
+  return {
+    picks: picksData.picks,
+    bank: picksData.entry_history.bank,
+    team_value: picksData.entry_history.value,
+    source: "historical",
+    caveat: "no_auth_pending_changes_unknown",
+    gameweek,
+    chips: [],
+  };
 }
 
 export async function updateMyTeam(teamId: string, picks: Pick[], chip?: string | null): Promise<unknown> {

@@ -40,12 +40,10 @@ export async function suggestCommand(playerName: string, asJson: boolean): Promi
   const teams = new Map(bootstrap.teams.map((t) => [t.id, t.name]));
   const fixtures = await api.getFixtures();
 
-  const gw = await api.getCurrentGameweek();
-  const picksData = await api.getMyTeam(teamId, gw);
-  const bank = picksData.entry_history.bank;
-  const budget = bank + playerOut!.now_cost;
+  const state = await api.getLiveSquadState(teamId);
+  const budget = state.bank + playerOut!.now_cost;
 
-  const myIds = new Set(picksData.picks.map((p) => p.element));
+  const myIds = new Set(state.picks.map((p) => p.element));
   const position = playerOut!.element_type;
 
   const candidates = bootstrap.elements.filter(
@@ -57,6 +55,8 @@ export async function suggestCommand(playerName: string, asJson: boolean): Promi
   const data = {
     player_out: { name: playerOut!.web_name, position: POS[position] ?? "???", price: playerOut!.now_cost / 10 },
     budget: budget / 10,
+    source: state.source,
+    caveat: state.caveat ?? undefined,
     recommendations: ranked.map((p) => ({
       name: p.web_name, team: teams.get(p.team) ?? "???",
       price: p.now_cost / 10, form: parseFloat(p.form),

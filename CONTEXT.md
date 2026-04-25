@@ -5,8 +5,8 @@
 ## Quick Reference
 
 ```
-fpl --json team                              # your current GW squad
-fpl --json team --next                       # your next GW squad
+fpl --json team                              # your live squad (next-GW; reflects pending transfers/captain)
+fpl --json team --gw <n>                     # historical squad for a past GW
 fpl --json budget                            # bank, rank, chips
 fpl --json player <name>                     # player stats
 fpl --json news                              # squad injury news
@@ -18,7 +18,9 @@ fpl --json transfers execute <out> <in>      # dry-run transfer
 fpl --json transfers execute <out> <in> --confirm  # confirm transfer
 fpl --json captain <name>                    # set captain
 fpl --json vice-captain <name>               # set vice-captain
-fpl --json chip <name>                       # activate chip
+fpl --json chip <name>                       # dry-run chip activation
+fpl --json chip <name> --confirm             # confirm chip activation
+fpl --json chip none --confirm               # deactivate the armed chip
 fpl --json doctor                            # connectivity check
 ```
 
@@ -28,7 +30,9 @@ fpl --json doctor                            # connectivity check
 - **ALWAYS use `--fields`** to limit output to the fields you need. Example: `fpl --json player Salah --fields "name,form,ppg,price"`.
 - **NEVER run `transfers execute --confirm` without first running a dry-run** (without `--confirm`) and inspecting the validation result.
 - **NEVER skip the dry-run step.** The FPL API does not support undoing transfers.
-- Authentication is required for `transfers execute`, `captain`, `vice-captain`, `chip`, and `team --next`. Read-only commands (`team`, `player`, `news`, `fixtures`, `transfers suggest`, `transfers hit`) work without login.
+- **`chip` is dry-run by default and requires `--confirm` to apply.** Chips are reversible until the next-GW deadline via `fpl chip none --confirm`. Always inspect the dry-run output first and check the returned `deadline` field.
+- **`fpl team` returns a wrapper object: `{gameweek, source, caveat?, squad: [...]}`.** `source: "live"` means the data reflects pending transfers/captain/chip changes. `source: "historical"` means it's the locked picks for a finished/running GW. If `caveat: "no_auth_pending_changes_unknown"` is present, the user isn't logged in and pending changes are not visible — recommend `fpl login` before answering "how is my team doing?"-style questions.
+- Authentication is required for live `team`, `transfers execute`, `captain`, `vice-captain`, and `chip`. Without login, `team` falls back to historical picks. Other read-only commands (`player`, `news`, `fixtures`, `transfers suggest`, `transfers hit`) work without login.
 
 ## Non-Interactive Setup
 
@@ -47,6 +51,7 @@ Transfer commands accept `--input-json` as an alternative to positional argument
 fpl --json transfers hit --input-json '{"out":"Salah","in":"Palmer","horizon":5}'
 fpl --json transfers execute --input-json '{"out":"Salah","in":"Palmer"}'
 fpl --json transfers execute --input-json '{"out":"Salah","in":"Palmer","confirm":true}'
+fpl --json chip --input-json '{"chip":"wildcard","confirm":true}'
 ```
 
 ## Field Filtering
@@ -77,7 +82,7 @@ Exit code is always 1 on error.
 4. Dry-run the transfer: `fpl --json transfers execute Watkins Isak`
 5. Inspect the dry-run result — check for errors
 6. Confirm: `fpl --json transfers execute Watkins Isak --confirm`
-7. Verify: `fpl --json team --next` to confirm the change
+7. Verify: `fpl --json team` to confirm the change (returns `source: "live"` when logged in)
 
 ## Workflow: Gameweek Prep
 

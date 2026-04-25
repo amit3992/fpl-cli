@@ -45,10 +45,20 @@ program.command("logout")
   .action(() => logoutCommand(json()));
 
 program.command("team")
-  .description("Show your current FPL squad")
-  .option("--next", "Show next gameweek squad (reflects transfers, captain changes)")
-  .option("--fields <fields>", "Comma-separated list of fields to include in JSON output")
-  .action((opts: { fields?: string; next?: boolean }) => teamCommand(json(), opts.fields, opts.next));
+  .description("Show your live FPL squad (reflects pending transfers/captain). Falls back to current GW picks if not logged in.")
+  .option("--gw <n>", "Show historical squad for a specific past gameweek (no auth needed)")
+  .option("--fields <fields>", "Comma-separated list of fields to include in JSON output (applied to squad entries)")
+  .action((opts: { fields?: string; gw?: string }) => {
+    let gw: number | undefined;
+    if (opts.gw !== undefined) {
+      gw = parseInt(opts.gw, 10);
+      if (Number.isNaN(gw) || gw < 1) {
+        console.error("Error: --gw must be a positive integer");
+        process.exit(1);
+      }
+    }
+    return teamCommand(json(), opts.fields, gw);
+  });
 
 program.command("captain")
   .description("Set captain for next gameweek")
@@ -61,9 +71,17 @@ program.command("vice-captain")
   .action((player: string) => captainCommand(player, true, json()));
 
 program.command("chip")
-  .description("Activate a chip (wildcard, freehit, bboost, 3xc)")
-  .argument("<name>", "Chip name: wildcard, freehit, bboost, 3xc")
-  .action((name: string) => chipCommand(name, json()));
+  .description("Activate or deactivate a chip (dry-run by default)")
+  .argument("[name]", "Chip name: wildcard, freehit, bboost, 3xc, none (deactivate)")
+  .option("--confirm", "Actually apply the chip change")
+  .option("--input-json <json>", 'JSON input: \'{"chip":"wildcard","confirm":true}\'')
+  .action((name: string | undefined, opts: { confirm?: boolean; inputJson?: string }) => {
+    if (!opts.inputJson && !name) {
+      console.error("Error: provide a chip name or --input-json");
+      process.exit(1);
+    }
+    return chipCommand(name ?? "", opts.confirm ?? false, json(), opts.inputJson);
+  });
 
 program.command("budget")
   .description("Show your bank balance, transfers, and chips")

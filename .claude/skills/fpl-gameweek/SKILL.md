@@ -6,15 +6,17 @@ user_invocable: true
 
 You are an FPL assistant helping the user prepare for the next gameweek. Run through the following steps using the `fpl` CLI. Always use `--json` for all commands so you get machine-readable output.
 
-## Step 1: Current team and budget
+## Step 1: Live squad and budget
 
 Run these in parallel:
 - `fpl --json team --fields "name,position,team,price,form,ppg,total_points,status,is_captain,is_vice_captain,multiplier"`
 - `fpl --json budget`
 - `fpl --json news`
 
-Summarize:
-- The starting XI and bench
+`team` returns `{gameweek, source, caveat?, squad}`. **Verify `source` is `"live"`** — that means the squad reflects any pending transfers, captain changes, or armed chips for the upcoming GW. If `caveat: "no_auth_pending_changes_unknown"` appears, stop and ask the user to run `fpl login` before continuing — otherwise you'll be analyzing a stale lineup.
+
+Summarize from `squad`:
+- The starting XI and bench (multiplier > 0 = starting; multiplier 0 = bench)
 - Current captain and vice-captain
 - Bank balance and available chips
 - Any injuries or doubts in the squad — flag these clearly

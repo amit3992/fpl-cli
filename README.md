@@ -39,11 +39,12 @@ Config is saved to `~/.config/fpl-cli/config.json`.
 ## Usage
 
 ```bash
-# Show your current GW squad
+# Show your live squad (next-GW state, reflects pending transfers/captain)
+# Auth required for live state; falls back to current-GW picks if not logged in.
 fpl team
 
-# Show your next GW squad (reflects transfers, captain changes)
-fpl team --next
+# Show a historical squad for a specific past GW
+fpl team --gw 25
 
 # Show budget, rank, chips
 fpl budget
@@ -76,8 +77,14 @@ fpl transfers execute Watkins Isak --confirm
 fpl captain Salah
 fpl vice-captain Palmer
 
-# Activate a chip (wildcard, freehit, bboost, 3xc)
+# Activate a chip (dry-run; wildcard, freehit, bboost, 3xc)
 fpl chip wildcard
+
+# Confirm a chip activation
+fpl chip wildcard --confirm
+
+# Deactivate the currently armed chip (before deadline)
+fpl chip none --confirm
 
 # Check config & connectivity
 fpl doctor
