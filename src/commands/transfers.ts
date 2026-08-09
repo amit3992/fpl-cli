@@ -4,10 +4,10 @@ import * as auth from "../auth.js";
 import * as config from "../config.js";
 import { rankPlayersByPosition, calculateHitValue } from "../scoring.js";
 import { printJson, printError, makeTable } from "../output.js";
+import { filterFields } from "../fields.js";
 import { sanitizePlayerName } from "../validate.js";
 import { computePlanId, computeSquadFingerprint } from "../plans.js";
-
-const POS = { 1: "GKP", 2: "DEF", 3: "MID", 4: "FWD" } as Record<number, string>;
+import { POS } from "../constants.js";
 
 interface TransferInput {
   out: string;
@@ -29,7 +29,7 @@ function parseJsonInput(jsonStr: string, asJson: boolean): TransferInput {
   }
 }
 
-export async function suggestCommand(playerName: string, asJson: boolean): Promise<void> {
+export async function suggestCommand(playerName: string, asJson: boolean, fields?: string): Promise<void> {
   playerName = sanitizePlayerName(playerName, asJson);
 
   const teamId = config.get("FPL_TEAM_ID");
@@ -66,7 +66,7 @@ export async function suggestCommand(playerName: string, asJson: boolean): Promi
     })),
   };
 
-  if (asJson) { printJson(data); return; }
+  if (asJson) { printJson(filterFields(data, fields)); return; }
 
   console.log();
   console.log(`  Replacing ${chalk.bold(data.player_out.name)} (${data.player_out.position}, £${data.player_out.price.toFixed(1)}m)`);

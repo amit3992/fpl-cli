@@ -6,12 +6,8 @@ import { printJson, printError, makeTable } from "../output.js";
 import { filterFields } from "../fields.js";
 import { sanitizePlayerName } from "../validate.js";
 import { computePlanId, computeSquadFingerprint } from "../plans.js";
+import { POS, STATUS, CHIP_NAMES } from "../constants.js";
 
-const POS = { 1: "GKP", 2: "DEF", 3: "MID", 4: "FWD" } as Record<number, string>;
-const STATUS = { a: "Available", d: "Doubtful", i: "Injured", s: "Suspended", u: "Unavailable" } as Record<string, string>;
-const CHIP_NAMES: Record<string, string> = {
-  wildcard: "Wildcard", freehit: "Free Hit", bboost: "Bench Boost", "3xc": "Triple Captain",
-};
 const STRUCTURAL_CHIPS = new Set(["wildcard", "freehit"]);
 const LINEUP_CHIPS = new Set(["bboost", "3xc"]);
 const VALID_CHIPS = ["wildcard", "freehit", "bboost", "3xc", "none"];
@@ -22,7 +18,14 @@ interface ChipInput {
   plan_id?: string;
 }
 
-export async function teamCommand(asJson: boolean, fields?: string, gw?: number): Promise<void> {
+// Slim default field set for `fpl team` JSON output (agents rarely need form/ppg/total).
+// --fields overrides this; --full restores the complete set.
+const SLIM_TEAM_FIELDS = [
+  "name", "position", "team", "price", "status",
+  "is_captain", "is_vice_captain", "multiplier",
+];
+
+export async function teamCommand(asJson: boolean, fields?: string, gw?: number, full = false): Promise<void> {
   const teamId = config.get("FPL_TEAM_ID");
   if (!teamId) printError("FPL Team ID not configured. Run: fpl init", asJson);
 
@@ -68,7 +71,8 @@ export async function teamCommand(asJson: boolean, fields?: string, gw?: number)
   if (asJson) {
     const output: Record<string, unknown> = { gameweek: viewGw, source };
     if (caveat) output.caveat = caveat;
-    output.squad = filterFields(squad, fields);
+    const effectiveFields = fields ?? (full ? undefined : SLIM_TEAM_FIELDS.join(","));
+    output.squad = filterFields(squad, effectiveFields);
     printJson(output);
     return;
   }
@@ -304,8 +308,17 @@ async function deactivateChip(
   asJson: boolean,
   planId?: string,
 ): Promise<void> {
+  // Pre-check before building any dry-run plan: if no chip is armed, `chip none`
+  // (dry-run OR confirm) has nothing to deactivate. Failing here keeps a dry-run
+  // from succeeding and then having --confirm fail. See AGENTS.md known issues.
   const active = myTeam.chips.find((c) => c.status_for_entry === "active");
-  if (!active) printError("No active chip to deactivate.", asJson);
+  if (!active) {
+    printError(
+      "No chip is currently armed, so there is nothing to deactivate. Arm one with `fpl chip <name>` first.",
+      asJson,
+      "INPUT_ERROR",
+    );
+  }
 
   if (confirm && !planId) {
     printError("Plan ID required. Run the dry-run first and pass --plan-id <id>.", asJson, "INPUT_ERROR");
@@ -397,8 +410,10 @@ export async function budgetCommand(asJson: boolean, fields?: string): Promise<v
   console.log(`  ${chalk.bold(data.team_name)}`);
   console.log(`  Bank:          ${chalk.green(`£${data.bank.toFixed(1)}m`)}`);
   console.log(`  Total value:   ${chalk.green(`£${data.total_value.toFixed(1)}m`)}`);
-  console.log(`  Overall rank:  ${chalk.yellow(data.overall_rank.toLocaleString())}`);
-  console.log(`  Total points:  ${chalk.yellow(String(data.total_points))}`);
+  const rankStr = data.overall_rank != null ? data.overall_rank.toLocaleString() : "—";
+  const pointsStr = data.total_points != null ? String(data.total_points) : "—";
+  console.log(`  Overall rank:  ${chalk.yellow(rankStr)}`);
+  console.log(`  Total points:  ${chalk.yellow(pointsStr)}`);
   console.log(`  Chips left:    ${chipsAvailable.join(", ") || "none"}`);
   if (chipsActive.length > 0) console.log(`  Chip armed:    ${chalk.cyan(chipsActive.join(", "))}`);
   if (state.caveat) console.log(chalk.dim(`  ${chalk.yellow("(not logged in — pending changes not shown)")}`));

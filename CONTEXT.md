@@ -5,11 +5,14 @@
 ## Quick Reference
 
 ```
-fpl --json team                              # your live squad (next-GW; reflects pending transfers/captain)
+fpl --json team                              # your live squad, slim fields (reflects pending transfers/captain)
+fpl --json team --full                       # your live squad, full fields (form, ppg, total_points)
 fpl --json team --gw <n>                     # historical squad for a past GW
+fpl --json status                            # one-call snapshot: squad + budget + chips + deadline + flagged
 fpl --json budget                            # bank, rank, chips
 fpl --json player <name>                     # player stats
 fpl --json news                              # squad injury news
+fpl --json news --limit <n>                  # cap the squad-wide list length
 fpl --json news <name>                       # player-specific news
 fpl --json fixtures <name>                   # fixture difficulty
 fpl --json transfers suggest <name>          # replacement options
@@ -35,7 +38,14 @@ fpl --json doctor                            # connectivity check
 - **Every mutating command (`transfers execute`, `captain`, `vice-captain`, `chip`) now requires `--plan-id <id>` together with `--confirm`** (breaking change). The dry-run response includes a `plan_id` computed from the intended action plus a fingerprint of your live squad state at that moment. Pass that exact `plan_id` back with `--confirm`. If your squad state changed since the dry-run (price move, a transfer landing, captain/chip change, or a new deadline), the `plan_id` will no longer match and the confirm is rejected with `STALE_PLAN` — re-run the dry-run to get a fresh `plan_id` before confirming. This proves `--confirm` is applying exactly the state you reviewed, not a stale one.
 - **`chip` is dry-run by default and requires `--confirm --plan-id <id>` to apply.** Chips are reversible until the next-GW deadline via `fpl chip none --confirm --plan-id <id>` (get a fresh plan_id from `fpl chip none` first). Always inspect the dry-run output first and check the returned `deadline` field.
 - **`captain` and `vice-captain` are dry-run by default and require `--confirm --plan-id <id>` to apply** (breaking change: previously applied immediately, then later only required `--confirm`). Always inspect the dry-run output — check `previous` (who holds the role now), `already_set`, and `plan_id` — before re-running with `--confirm --plan-id <id>`.
+- **JSON output is minified** (single line, no indentation) to save context. Pretty-printing is not available.
 - **`fpl team` returns a wrapper object: `{gameweek, source, caveat?, squad: [...]}`.** `source: "live"` means the data reflects pending transfers/captain/chip changes. `source: "historical"` means it's the locked picks for a finished/running GW. If `caveat: "no_auth_pending_changes_unknown"` is present, the user isn't logged in and pending changes are not visible — recommend `fpl login` before answering "how is my team doing?"-style questions.
+- **`fpl team` squad entries default to a slim field set** (`name, position, team, price, status, is_captain, is_vice_captain, multiplier`). Use `--full` to also get `form, ppg, total_points`, or `--fields` to pick exactly what you need (`--fields` overrides both).
+- **`fpl status` returns one aggregated snapshot:** `{gameweek, deadline, team_name, bank, total_value, overall_rank, total_points, chips_available, chips_active, source, caveat?, squad: [slim fields], flagged: [{name, status, news, chance_next_round}]}`. Prefer it over multiple calls when you just need the current picture. `overall_rank`/`total_points` are `null` in preseason. Same `source`/`caveat` contract as `team`.
+- **`fpl news` (squad-wide) returns `{source, caveat?, players: [...]}`** and uses live squad state (same `source`/`caveat` contract as `team`). It shows flagged (non-available) players if any exist, otherwise the whole squad. `--limit <n>` caps the list; `--fields` projects each entry. The single-player form (`fpl news <name>`) still returns a flat object and supports `--fields`.
+- **`fpl transfers suggest` supports `--fields`** on its JSON output.
+- **`fpl chip none` pre-checks for an armed chip on the dry-run too** — if nothing is armed it fails immediately with `INPUT_ERROR` rather than passing dry-run and failing on `--confirm`.
+- **After a successful `fpl login`, the stored `FPL_PASSWORD` is removed from `config.json`** (OAuth tokens are used thereafter). Email and team id are kept. Re-run `fpl init` if you need to re-store credentials for a fresh login.
 - Authentication is required for live `team`, `transfers execute`, `captain`, `vice-captain`, and `chip`. Without login, `team` falls back to historical picks. Other read-only commands (`player`, `news`, `fixtures`, `transfers suggest`, `transfers hit`) work without login.
 
 ## Non-Interactive Setup
@@ -46,6 +56,10 @@ Use flags instead of interactive prompts:
 fpl init --team-id 123456
 fpl init --team-id 123456 --email user@example.com --password secret
 ```
+
+After a successful `fpl login`, the stored `FPL_PASSWORD` is removed from `config.json` (OAuth tokens are used from then on). To re-authenticate non-interactively you must first re-run `fpl init` with `--password` again.
+
+> **Note:** If token refresh fails, use interactive `fpl login` as the recommended recovery path.
 
 ## JSON Input
 
@@ -68,6 +82,16 @@ Reduce output size with `--fields` (comma-separated):
 fpl --json team --fields "name,position,price,form"
 fpl --json player Salah --fields "name,price,form,ppg,upcoming_fixtures"
 fpl --json budget --fields "bank,chips_available"
+fpl --json status --fields "deadline,bank,flagged"
+fpl --json news --fields "name,status" --limit 3
+fpl --json transfers suggest Watkins --fields "name,price,score"
+```
+
+One-level dotted paths let you slim nested arrays/objects:
+
+```
+fpl --json status --fields "squad.name,squad.price,flagged.name"
+fpl --json transfers suggest Watkins --fields "recommendations.name,recommendations.price"
 ```
 
 ## Error Format

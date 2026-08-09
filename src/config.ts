@@ -35,3 +35,11 @@ export function save(config: Config): void {
 export function get(key: keyof Config): string {
   return load()[key] ?? "";
 }
+
+/** Remove a key from the stored config (if present) and persist the change. */
+export function unset(key: keyof Config): void {
+  const config = load();
+  if (!(key in config)) return;
+  delete config[key];
+  save(config);
+}

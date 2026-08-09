@@ -7,7 +7,7 @@ import Table from "cli-table3";
 import chalk from "chalk";
 
 export function printJson(data: unknown): void {
-  console.log(JSON.stringify(data, null, 2));
+  console.log(JSON.stringify(data));
 }
 
 /**

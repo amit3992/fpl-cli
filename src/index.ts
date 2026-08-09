@@ -7,6 +7,7 @@ import { Command } from "commander";
 import { initCommand } from "./commands/init.js";
 import { loginCommand, logoutCommand } from "./commands/login.js";
 import { teamCommand, budgetCommand, captainCommand, chipCommand } from "./commands/team.js";
+import { statusCommand } from "./commands/status.js";
 import { playerCommand } from "./commands/player.js";
 import { newsCommand } from "./commands/news.js";
 import { fixturesCommand } from "./commands/fixtures.js";
@@ -50,7 +51,8 @@ program.command("team")
   .description("Show your live FPL squad (reflects pending transfers/captain). Falls back to current GW picks if not logged in.")
   .option("--gw <n>", "Show historical squad for a specific past gameweek (no auth needed)")
   .option("--fields <fields>", "Comma-separated list of fields to include in JSON output (applied to squad entries)")
-  .action((opts: { fields?: string; gw?: string }) => {
+  .option("--full", "Include the full squad field set (form, ppg, total_points) in JSON output")
+  .action((opts: { fields?: string; gw?: string; full?: boolean }) => {
     let gw: number | undefined;
     if (opts.gw !== undefined) {
       gw = parseInt(opts.gw, 10);
@@ -58,8 +60,13 @@ program.command("team")
         printError("--gw must be a positive integer", json(), "INPUT_ERROR");
       }
     }
-    return teamCommand(json(), opts.fields, gw);
+    return teamCommand(json(), opts.fields, gw, opts.full ?? false);
   });
+
+program.command("status")
+  .description("Aggregated snapshot: squad, budget, chips, deadline, and flagged players")
+  .option("--fields <fields>", "Comma-separated list of fields to include in JSON output")
+  .action((opts: { fields?: string }) => statusCommand(json(), opts.fields));
 
 program.command("captain")
   .description("Set captain for next gameweek (dry-run by default)")
@@ -104,7 +111,18 @@ program.command("player")
 program.command("news")
   .description("Show injury/availability news")
   .argument("[player]", "Optional player name")
-  .action((player?: string) => newsCommand(player, json()));
+  .option("--fields <fields>", "Comma-separated list of fields to include in JSON output")
+  .option("--limit <n>", "Cap the number of squad-wide players shown (JSON and human)")
+  .action((player: string | undefined, opts: { fields?: string; limit?: string }) => {
+    let limit: number | undefined;
+    if (opts.limit !== undefined) {
+      limit = parseInt(opts.limit, 10);
+      if (Number.isNaN(limit) || limit < 0) {
+        printError("--limit must be a non-negative integer", json(), "INPUT_ERROR");
+      }
+    }
+    return newsCommand(player, json(), opts.fields, limit);
+  });
 
 program.command("fixtures")
   .description("Show upcoming fixture difficulty for a player")
@@ -119,7 +137,8 @@ const transfers = program.command("transfers")
 transfers.command("suggest")
   .description("Find top 5 replacement options for a player")
   .argument("<player>", "Player to replace")
-  .action((player: string) => suggestCommand(player, json()));
+  .option("--fields <fields>", "Comma-separated list of fields to include in JSON output")
+  .action((player: string, opts: { fields?: string }) => suggestCommand(player, json(), opts.fields));
 
 transfers.command("hit")
   .description("Calculate whether a transfer hit is worth taking")

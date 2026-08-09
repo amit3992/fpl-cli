@@ -21,8 +21,11 @@ export async function loginCommand(asJson: boolean): Promise<void> {
 
   try {
     await auth.login(email, password);
-    if (asJson) printJson({ status: "authenticated" });
-    else console.log(chalk.green("Logged in successfully. Tokens saved."));
+    // OAuth tokens are what's actually used from here on; drop the plaintext
+    // password from config.json now that login succeeded. Email + team id stay.
+    config.unset("FPL_PASSWORD");
+    if (asJson) printJson({ status: "authenticated", password_cleared: true });
+    else console.log(chalk.green("Logged in successfully. Tokens saved. Stored password cleared."));
   } catch (e) {
     printError(`Login failed: ${e instanceof Error ? e.message : e}`, asJson);
   }

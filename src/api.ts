@@ -2,11 +2,53 @@
  * FPL API client.
  */
 
+import { readFileSync, writeFileSync, mkdirSync, chmodSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import { getAccessToken } from "./auth.js";
 
 const BASE_URL = "https://fantasy.premierleague.com/api";
 
 let bootstrapCache: Bootstrap | null = null;
+
+// Cross-invocation bootstrap cache: /bootstrap-static/ is large and stable within
+// a gameweek, so a short-TTL file cache cuts latency for agent-driven multi-call
+// workflows. The in-process cache above still short-circuits repeat calls within a
+// single invocation. Any parse/IO/shape error falls back to the network silently.
+const CACHE_DIR = join(homedir(), ".config", "fpl-cli", "cache");
+const BOOTSTRAP_CACHE_FILE = join(CACHE_DIR, "bootstrap.json");
+const BOOTSTRAP_CACHE_TTL_MS = 10 * 60 * 1000;
+
+function isValidBootstrap(data: unknown): data is Bootstrap {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    Array.isArray((data as { elements?: unknown }).elements)
+  );
+}
+
+function readBootstrapCache(): Bootstrap | null {
+  try {
+    const raw = readFileSync(BOOTSTRAP_CACHE_FILE, "utf-8");
+    const parsed = JSON.parse(raw) as { cached_at?: number; data?: unknown };
+    if (typeof parsed.cached_at !== "number") return null;
+    if (Date.now() - parsed.cached_at > BOOTSTRAP_CACHE_TTL_MS) return null;
+    if (!isValidBootstrap(parsed.data)) return null;
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function writeBootstrapCache(data: Bootstrap): void {
+  try {
+    mkdirSync(CACHE_DIR, { recursive: true });
+    writeFileSync(BOOTSTRAP_CACHE_FILE, JSON.stringify({ cached_at: Date.now(), data }));
+    chmodSync(BOOTSTRAP_CACHE_FILE, 0o600);
+  } catch {
+    // Cache write is best-effort; ignore IO errors.
+  }
+}
 
 // --- Error taxonomy ---
 
@@ -242,8 +284,9 @@ export interface PlayerSummary {
 
 export interface Entry {
   name: string;
-  summary_overall_rank: number;
-  summary_overall_points: number;
+  // Null in preseason before any gameweek has scored.
+  summary_overall_rank: number | null;
+  summary_overall_points: number | null;
   chips: { name: string }[];
 }
 
@@ -305,7 +348,13 @@ async function authPost<T>(path: string, payload: unknown): Promise<T> {
 
 export async function getBootstrap(): Promise<Bootstrap> {
   if (bootstrapCache) return bootstrapCache;
+  const cached = readBootstrapCache();
+  if (cached) {
+    bootstrapCache = cached;
+    return bootstrapCache;
+  }
   bootstrapCache = await get<Bootstrap>("/bootstrap-static/");
+  writeBootstrapCache(bootstrapCache);
   return bootstrapCache;
 }
 
@@ -469,8 +518,17 @@ export async function getLiveSquadState(teamId: string): Promise<LiveSquadState>
   };
 }
 
+export function invalidateBootstrapCache(): void {
+  bootstrapCache = null;
+  try {
+    rmSync(BOOTSTRAP_CACHE_FILE, { force: true });
+  } catch {
+    // Ignore IO errors
+  }
+}
+
 export async function updateMyTeam(teamId: string, picks: Pick[], chip?: string | null): Promise<unknown> {
-  return authPost(`/my-team/${teamId}/`, {
+  const result = await authPost(`/my-team/${teamId}/`, {
     chip: chip ?? null,
     picks: picks.map((p) => ({
       element: p.element,
@@ -479,6 +537,8 @@ export async function updateMyTeam(teamId: string, picks: Pick[], chip?: string 
       is_vice_captain: p.is_vice_captain,
     })),
   });
+  invalidateBootstrapCache();
+  return result;
 }
 
 export async function makeTransfer(opts: {
@@ -489,7 +549,7 @@ export async function makeTransfer(opts: {
   wildcard?: boolean;
   freehit?: boolean;
 }): Promise<unknown> {
-  return authPost("/transfers/", {
+  const result = await authPost("/transfers/", {
     confirmed: opts.confirm,
     entry: parseInt(opts.teamId, 10),
     event: opts.gameweek,
@@ -497,4 +557,6 @@ export async function makeTransfer(opts: {
     wildcard: opts.wildcard ?? false,
     freehit: opts.freehit ?? false,
   });
+  invalidateBootstrapCache();
+  return result;
 }

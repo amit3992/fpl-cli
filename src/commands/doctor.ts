@@ -24,14 +24,19 @@ export async function doctorCommand(asJson: boolean): Promise<void> {
   checks.push({ check: "Team ID", ok: !!teamId, detail: teamId || "Not set" });
 
   const hasCreds = !!(cfg.FPL_EMAIL && cfg.FPL_PASSWORD);
-  checks.push({
-    check: "FPL credentials",
-    ok: hasCreds,
-    detail: hasCreds ? "Configured" : "Not set (transfers disabled)",
-  });
-
   const tokens = auth.loadTokens();
   const tokenOk = tokens !== null && !auth.isTokenExpired(tokens);
+  const credsOk = hasCreds || tokenOk;
+  let credsDetail: string;
+  if (hasCreds) credsDetail = "Configured";
+  else if (tokenOk) credsDetail = "Via OAuth tokens";
+  else credsDetail = "Not set (transfers disabled)";
+  checks.push({
+    check: "FPL credentials",
+    ok: credsOk,
+    detail: credsDetail,
+  });
+
   checks.push({
     check: "Auth token",
     ok: tokenOk,

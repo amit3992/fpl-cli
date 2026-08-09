@@ -2,11 +2,16 @@ import chalk from "chalk";
 import * as api from "../api.js";
 import * as config from "../config.js";
 import { printJson, printError, makeTable } from "../output.js";
+import { filterFields } from "../fields.js";
 import { sanitizePlayerName } from "../validate.js";
+import { STATUS } from "../constants.js";
 
-const STATUS = { a: "Available", d: "Doubtful", i: "Injured", s: "Suspended", u: "Unavailable" } as Record<string, string>;
-
-export async function newsCommand(playerName: string | undefined, asJson: boolean): Promise<void> {
+export async function newsCommand(
+  playerName: string | undefined,
+  asJson: boolean,
+  fields?: string,
+  limit?: number,
+): Promise<void> {
   if (playerName) {
     playerName = sanitizePlayerName(playerName, asJson);
 
@@ -26,7 +31,7 @@ export async function newsCommand(playerName: string | undefined, asJson: boolea
       chance_next_round: p!.chance_of_playing_next_round,
     };
 
-    if (asJson) { printJson(data); return; }
+    if (asJson) { printJson(filterFields(data, fields)); return; }
 
     console.log();
     console.log(`  ${chalk.bold(data.full_name)} (${data.team})`);
@@ -43,9 +48,9 @@ export async function newsCommand(playerName: string | undefined, asJson: boolea
 
   const bootstrap = await api.getBootstrap();
   const elements = new Map(bootstrap.elements.map((p) => [p.id, p]));
-  const picksData = await api.getMyTeam(teamId);
+  const state = await api.getLiveSquadState(teamId);
 
-  const items = picksData.picks.map((pick) => {
+  const items = state.picks.map((pick) => {
     const p = elements.get(pick.element)!;
     return {
       name: p.web_name,
@@ -57,11 +62,18 @@ export async function newsCommand(playerName: string | undefined, asJson: boolea
   });
 
   const flagged = items.filter((i) => i.status_code !== "a");
-  const display = flagged.length > 0 ? flagged : items;
+  let display = flagged.length > 0 ? flagged : items;
+  if (limit !== undefined && limit >= 0) display = display.slice(0, limit);
 
-  if (asJson) { printJson(display); return; }
+  if (asJson) {
+    const output: Record<string, unknown> = { source: state.source };
+    if (state.caveat) output.caveat = state.caveat;
+    output.players = filterFields(display, fields);
+    printJson(output);
+    return;
+  }
 
-  if (flagged.length === 0) {
+  if (flagged.length === 0 && limit === undefined) {
     console.log(`\n  ${chalk.green("All players available!")}\n`);
     return;
   }

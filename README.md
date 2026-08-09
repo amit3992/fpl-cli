@@ -36,15 +36,26 @@ You'll be prompted for:
 
 Config is saved to `~/.config/fpl-cli/config.json`.
 
+## Breaking Changes
+
+- **`fpl news` (squad-wide) JSON** is now `{source, caveat?, players:[...]}` — was a bare array.
+- **`fpl team --json`** returns a slim field set by default. Use `--full` for the previous complete set.
+- **JSON output is minified** (single line, no indentation).
+
 ## Usage
 
 ```bash
 # Show your live squad (next-GW state, reflects pending transfers/captain)
 # Auth required for live state; falls back to current-GW picks if not logged in.
+# JSON squad entries use a slim field set by default; add --full for form/ppg/total.
 fpl team
+fpl team --full
 
 # Show a historical squad for a specific past GW
 fpl team --gw 25
+
+# One-call snapshot: squad + budget + chips + deadline + flagged players
+fpl status
 
 # Show budget, rank, chips
 fpl budget
@@ -52,8 +63,9 @@ fpl budget
 # Player stats
 fpl player Salah
 
-# Injury news for your squad
+# Injury news for your squad (cap the list with --limit)
 fpl news
+fpl news --limit 3
 
 # News for a specific player
 fpl news Palmer
@@ -95,16 +107,19 @@ fpl doctor
 Transfers, captain changes, and chips require authentication:
 
 ```bash
-fpl login    # authenticate with FPL
+fpl login    # authenticate with FPL (clears the stored password on success)
 fpl logout   # clear stored tokens
 ```
 
+A successful `fpl login` removes `FPL_PASSWORD` from `config.json` (OAuth tokens are used from then on); your email and team id are kept.
+
 ### JSON Output
 
-All commands support `--json` for machine-parseable output:
+All commands support `--json` for machine-parseable output. JSON is minified (single line):
 
 ```bash
 fpl --json team
+fpl --json status
 fpl --json player Salah
 fpl --json transfers suggest Watkins
 ```
@@ -117,6 +132,16 @@ Limit JSON output to specific fields with `--fields`:
 fpl --json team --fields "name,position,price,form"
 fpl --json player Salah --fields "name,price,form,ppg"
 fpl --json budget --fields "bank,chips_available"
+fpl --json status --fields "deadline,bank,flagged"
+fpl --json news --fields "name,status" --limit 3
+fpl --json transfers suggest Watkins --fields "name,price,score"
+```
+
+One-level dotted paths let you slim nested arrays/objects:
+
+```bash
+fpl --json status --fields "squad.name,squad.price,flagged.name"
+fpl --json transfers suggest Watkins --fields "recommendations.name,recommendations.price"
 ```
 
 ### JSON Input

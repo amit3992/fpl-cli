@@ -3,9 +3,7 @@ import * as api from "../api.js";
 import { printJson, printError, makeTable } from "../output.js";
 import { sanitizePlayerName } from "../validate.js";
 import { filterFields } from "../fields.js";
-
-const POS = { 1: "GKP", 2: "DEF", 3: "MID", 4: "FWD" } as Record<number, string>;
-const STATUS = { a: "Available", d: "Doubtful", i: "Injured", s: "Suspended", u: "Unavailable" } as Record<string, string>;
+import { POS, STATUS } from "../constants.js";
 
 export async function playerCommand(name: string, asJson: boolean, fields?: string): Promise<void> {
   name = sanitizePlayerName(name, asJson);
