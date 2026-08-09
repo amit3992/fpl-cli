@@ -47,6 +47,7 @@ fpl --json doctor                            # connectivity check
 - **`fpl chip none` pre-checks for an armed chip on the dry-run too** — if nothing is armed it fails immediately with `INPUT_ERROR` rather than passing dry-run and failing on `--confirm`.
 - **After a successful `fpl login`, the stored `FPL_PASSWORD` is removed from `config.json`** (OAuth tokens are used thereafter). Email and team id are kept. Re-run `fpl init` if you need to re-store credentials for a fresh login.
 - Authentication is required for live `team`, `transfers execute`, `captain`, `vice-captain`, and `chip`. Without login, `team` falls back to historical picks. Other read-only commands (`player`, `news`, `fixtures`, `transfers suggest`, `transfers hit`) work without login.
+- **Mutating commands always target the FPL `is_next` gameweek — never the in-progress GW.** `transfers execute`, `chip`, and captain/vice-captain changes apply to whichever gameweek FPL currently flags as `is_next`, not `gameweek` from `fpl team`/`fpl status` if that differs. Once a GW's deadline passes, `is_next` rolls over to the *following* gameweek — so a mutation planned right at/after a deadline silently targets a GW further out than expected. Before planning any mutation, check that the `deadline` field from `fpl --json status` is still in the future; if it has passed, re-check `gameweek`/`deadline` before proceeding. After the season's final gameweek, there is no `is_next` GW and mutating commands fail with `API_ERROR` ("No upcoming gameweek").
 
 ## Non-Interactive Setup
 
@@ -123,6 +124,10 @@ All errors are returned as a single JSON object when `--json` is set:
 6. Confirm with the exact `plan_id` from step 4: `fpl --json transfers execute Watkins Isak --confirm --plan-id <id>`
 7. If confirm fails with `STALE_PLAN`, your squad state changed since step 4 — go back to step 4 for a fresh `plan_id`
 8. Verify: `fpl --json team` to confirm the change (returns `source: "live"` when logged in)
+
+## Mutation Loop
+
+For any mutating command (`transfers execute`, `chip`, `captain`, `vice-captain`): dry-run → inspect the validation result and `deadline` → confirm immediately with the returned `plan_id`. Don't sit on a `plan_id` — it goes stale (rejected with `STALE_PLAN`) on price changes (FPL updates prices nightly) and on deadline rollover (`is_next` changing GW). On `STALE_PLAN`, re-run the dry-run for a fresh `plan_id` rather than retrying the same one. On a network/timeout error (`NETWORK_ERROR`/`TIMEOUT`, exit code 4) *after* sending `--confirm`, don't blindly retry — the POST may have landed on the FPL side even though the response didn't come back. Run `fpl --json team` (or `fpl --json status`) first to check whether the change already applied before deciding whether to retry.
 
 ## Workflow: Gameweek Prep
 

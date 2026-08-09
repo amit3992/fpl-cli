@@ -376,7 +376,13 @@ export async function getNextGameweek(): Promise<number> {
   }
   // If no "next" (e.g., mid-gameweek), current + 1
   for (const event of data.events) {
-    if (event.is_current) return event.id + 1;
+    if (event.is_current) {
+      const candidateId = event.id + 1;
+      if (!data.events.some((e) => e.id === candidateId)) {
+        throw new ApiError("API_ERROR", "No upcoming gameweek (season finished or not yet started)");
+      }
+      return candidateId;
+    }
   }
   return 1;
 }
