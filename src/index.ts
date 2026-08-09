@@ -12,6 +12,8 @@ import { newsCommand } from "./commands/news.js";
 import { fixturesCommand } from "./commands/fixtures.js";
 import { suggestCommand, hitCommand, executeCommand } from "./commands/transfers.js";
 import { doctorCommand } from "./commands/doctor.js";
+import { printError } from "./output.js";
+import { ApiError } from "./api.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
@@ -53,34 +55,39 @@ program.command("team")
     if (opts.gw !== undefined) {
       gw = parseInt(opts.gw, 10);
       if (Number.isNaN(gw) || gw < 1) {
-        console.error("Error: --gw must be a positive integer");
-        process.exit(1);
+        printError("--gw must be a positive integer", json(), "INPUT_ERROR");
       }
     }
     return teamCommand(json(), opts.fields, gw);
   });
 
 program.command("captain")
-  .description("Set captain for next gameweek")
+  .description("Set captain for next gameweek (dry-run by default)")
   .argument("<player>", "Player name")
-  .action((player: string) => captainCommand(player, false, json()));
+  .option("--confirm", "Actually apply the captain change")
+  .option("--plan-id <id>", "plan_id returned by the dry-run; required with --confirm")
+  .action((player: string, opts: { confirm?: boolean; planId?: string }) =>
+    captainCommand(player, false, opts.confirm ?? false, json(), opts.planId));
 
 program.command("vice-captain")
-  .description("Set vice-captain for next gameweek")
+  .description("Set vice-captain for next gameweek (dry-run by default)")
   .argument("<player>", "Player name")
-  .action((player: string) => captainCommand(player, true, json()));
+  .option("--confirm", "Actually apply the vice-captain change")
+  .option("--plan-id <id>", "plan_id returned by the dry-run; required with --confirm")
+  .action((player: string, opts: { confirm?: boolean; planId?: string }) =>
+    captainCommand(player, true, opts.confirm ?? false, json(), opts.planId));
 
 program.command("chip")
   .description("Activate or deactivate a chip (dry-run by default)")
   .argument("[name]", "Chip name: wildcard, freehit, bboost, 3xc, none (deactivate)")
   .option("--confirm", "Actually apply the chip change")
-  .option("--input-json <json>", 'JSON input: \'{"chip":"wildcard","confirm":true}\'')
-  .action((name: string | undefined, opts: { confirm?: boolean; inputJson?: string }) => {
+  .option("--plan-id <id>", "plan_id returned by the dry-run; required with --confirm")
+  .option("--input-json <json>", 'JSON input: \'{"chip":"wildcard","confirm":true,"plan_id":"..."}\'')
+  .action((name: string | undefined, opts: { confirm?: boolean; planId?: string; inputJson?: string }) => {
     if (!opts.inputJson && !name) {
-      console.error("Error: provide a chip name or --input-json");
-      process.exit(1);
+      printError("provide a chip name or --input-json", json(), "INPUT_ERROR");
     }
-    return chipCommand(name ?? "", opts.confirm ?? false, json(), opts.inputJson);
+    return chipCommand(name ?? "", opts.confirm ?? false, json(), opts.inputJson, opts.planId);
   });
 
 program.command("budget")
@@ -122,8 +129,7 @@ transfers.command("hit")
   .option("--input-json <json>", 'JSON input: \'{"out":"Salah","in":"Palmer"}\'')
   .action((playerOut: string | undefined, playerIn: string | undefined, opts: { horizon: string; inputJson?: string }) => {
     if (!opts.inputJson && (!playerOut || !playerIn)) {
-      console.error("Error: provide player names or --input-json");
-      process.exit(1);
+      printError("provide player names or --input-json", json(), "INPUT_ERROR");
     }
     return hitCommand(playerOut ?? "", playerIn ?? "", parseInt(opts.horizon, 10), json(), opts.inputJson);
   });
@@ -133,17 +139,38 @@ transfers.command("execute")
   .argument("[player-out]", "Player to transfer out")
   .argument("[player-in]", "Player to transfer in")
   .option("--confirm", "Actually confirm the transfer (irreversible)")
-  .option("--input-json <json>", 'JSON input: \'{"out":"Salah","in":"Palmer","confirm":true}\'')
-  .action((playerOut: string | undefined, playerIn: string | undefined, opts: { confirm?: boolean; inputJson?: string }) => {
+  .option("--plan-id <id>", "plan_id returned by the dry-run; required with --confirm")
+  .option("--input-json <json>", 'JSON input: \'{"out":"Salah","in":"Palmer","confirm":true,"plan_id":"..."}\'')
+  .action((playerOut: string | undefined, playerIn: string | undefined, opts: { confirm?: boolean; planId?: string; inputJson?: string }) => {
     if (!opts.inputJson && (!playerOut || !playerIn)) {
-      console.error("Error: provide player names or --input-json");
-      process.exit(1);
+      printError("provide player names or --input-json", json(), "INPUT_ERROR");
     }
-    return executeCommand(playerOut ?? "", playerIn ?? "", opts.confirm ?? false, json(), opts.inputJson);
+    return executeCommand(playerOut ?? "", playerIn ?? "", opts.confirm ?? false, json(), opts.inputJson, opts.planId);
   });
 
 program.command("doctor")
   .description("Check your configuration and API connectivity")
   .action(() => doctorCommand(json()));
 
-program.parse();
+program.exitOverride();
+
+async function main(): Promise<void> {
+  try {
+    await program.parseAsync();
+  } catch (e) {
+    // printError() and Commander's own parse errors call process.exit() directly
+    // (via exitOverride, Commander throws instead — handled below); anything else
+    // reaching here is either an ApiError from api.ts or a genuinely unexpected error.
+    if ((e as { exitCode?: number; code?: string })?.code?.startsWith("commander.")) {
+      const exitCode = (e as { exitCode?: number }).exitCode ?? 1;
+      process.exit(exitCode);
+    }
+    if (e instanceof ApiError) {
+      printError(e.message, json(), e.code, e.retryable);
+    }
+    const message = e instanceof Error ? e.message : String(e);
+    printError(message, json(), "UNEXPECTED_ERROR");
+  }
+}
+
+void main();

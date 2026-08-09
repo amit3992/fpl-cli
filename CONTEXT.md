@@ -14,13 +14,15 @@ fpl --json news <name>                       # player-specific news
 fpl --json fixtures <name>                   # fixture difficulty
 fpl --json transfers suggest <name>          # replacement options
 fpl --json transfers hit <out> <in>          # hit value calculation
-fpl --json transfers execute <out> <in>      # dry-run transfer
-fpl --json transfers execute <out> <in> --confirm  # confirm transfer
-fpl --json captain <name>                    # set captain
-fpl --json vice-captain <name>               # set vice-captain
-fpl --json chip <name>                       # dry-run chip activation
-fpl --json chip <name> --confirm             # confirm chip activation
-fpl --json chip none --confirm               # deactivate the armed chip
+fpl --json transfers execute <out> <in>      # dry-run transfer, returns plan_id
+fpl --json transfers execute <out> <in> --confirm --plan-id <id>  # confirm transfer
+fpl --json captain <name>                    # dry-run captain change, returns plan_id
+fpl --json captain <name> --confirm --plan-id <id>          # confirm captain change
+fpl --json vice-captain <name>               # dry-run vice-captain change, returns plan_id
+fpl --json vice-captain <name> --confirm --plan-id <id>     # confirm vice-captain change
+fpl --json chip <name>                       # dry-run chip activation, returns plan_id
+fpl --json chip <name> --confirm --plan-id <id>             # confirm chip activation
+fpl --json chip none --confirm --plan-id <id>               # deactivate the armed chip
 fpl --json doctor                            # connectivity check
 ```
 
@@ -30,7 +32,9 @@ fpl --json doctor                            # connectivity check
 - **ALWAYS use `--fields`** to limit output to the fields you need. Example: `fpl --json player Salah --fields "name,form,ppg,price"`.
 - **NEVER run `transfers execute --confirm` without first running a dry-run** (without `--confirm`) and inspecting the validation result.
 - **NEVER skip the dry-run step.** The FPL API does not support undoing transfers.
-- **`chip` is dry-run by default and requires `--confirm` to apply.** Chips are reversible until the next-GW deadline via `fpl chip none --confirm`. Always inspect the dry-run output first and check the returned `deadline` field.
+- **Every mutating command (`transfers execute`, `captain`, `vice-captain`, `chip`) now requires `--plan-id <id>` together with `--confirm`** (breaking change). The dry-run response includes a `plan_id` computed from the intended action plus a fingerprint of your live squad state at that moment. Pass that exact `plan_id` back with `--confirm`. If your squad state changed since the dry-run (price move, a transfer landing, captain/chip change, or a new deadline), the `plan_id` will no longer match and the confirm is rejected with `STALE_PLAN` — re-run the dry-run to get a fresh `plan_id` before confirming. This proves `--confirm` is applying exactly the state you reviewed, not a stale one.
+- **`chip` is dry-run by default and requires `--confirm --plan-id <id>` to apply.** Chips are reversible until the next-GW deadline via `fpl chip none --confirm --plan-id <id>` (get a fresh plan_id from `fpl chip none` first). Always inspect the dry-run output first and check the returned `deadline` field.
+- **`captain` and `vice-captain` are dry-run by default and require `--confirm --plan-id <id>` to apply** (breaking change: previously applied immediately, then later only required `--confirm`). Always inspect the dry-run output — check `previous` (who holds the role now), `already_set`, and `plan_id` — before re-running with `--confirm --plan-id <id>`.
 - **`fpl team` returns a wrapper object: `{gameweek, source, caveat?, squad: [...]}`.** `source: "live"` means the data reflects pending transfers/captain/chip changes. `source: "historical"` means it's the locked picks for a finished/running GW. If `caveat: "no_auth_pending_changes_unknown"` is present, the user isn't logged in and pending changes are not visible — recommend `fpl login` before answering "how is my team doing?"-style questions.
 - Authentication is required for live `team`, `transfers execute`, `captain`, `vice-captain`, and `chip`. Without login, `team` falls back to historical picks. Other read-only commands (`player`, `news`, `fixtures`, `transfers suggest`, `transfers hit`) work without login.
 
@@ -50,9 +54,11 @@ Transfer commands accept `--input-json` as an alternative to positional argument
 ```
 fpl --json transfers hit --input-json '{"out":"Salah","in":"Palmer","horizon":5}'
 fpl --json transfers execute --input-json '{"out":"Salah","in":"Palmer"}'
-fpl --json transfers execute --input-json '{"out":"Salah","in":"Palmer","confirm":true}'
-fpl --json chip --input-json '{"chip":"wildcard","confirm":true}'
+fpl --json transfers execute --input-json '{"out":"Salah","in":"Palmer","confirm":true,"plan_id":"<id from dry-run>"}'
+fpl --json chip --input-json '{"chip":"wildcard","confirm":true,"plan_id":"<id from dry-run>"}'
 ```
+
+`plan_id` in `--input-json` is equivalent to `--plan-id` on the command line; both are required when `confirm`/`--confirm` is set.
 
 ## Field Filtering
 
@@ -66,23 +72,33 @@ fpl --json budget --fields "bank,chips_available"
 
 ## Error Format
 
-All errors are returned as JSON when `--json` is set:
+All errors are returned as a single JSON object when `--json` is set:
 
 ```json
-{"error": "Player not found: Salaah"}
+{"error": "Player not found: Salaah", "code": "INPUT_ERROR", "retryable": false}
 ```
 
-Exit code is always 1 on error.
+`code` and `retryable` let agents decide whether to retry or stop. Exit codes map 1:1 to `code`:
+
+| Exit code | `code` | Meaning | Retry? |
+|---|---|---|---|
+| 1 | `UNEXPECTED_ERROR` | Uncaught/internal error | No |
+| 2 | `INPUT_ERROR` | Invalid input or missing config (e.g. `fpl init` not run, or `--confirm` without `--plan-id`) | No |
+| 2 | `STALE_PLAN` | `--plan-id` no longer matches live squad state — re-run the dry-run for a fresh `plan_id` | No (re-dry-run, then retry confirm) |
+| 3 | `AUTH_REQUIRED` | Not authenticated — run `fpl login` | No (fix auth first) |
+| 4 | `NETWORK_ERROR` / `TIMEOUT` / `RATE_LIMITED` | Transient failure calling the FPL API | Yes, with backoff |
+| 5 | `API_ERROR` | FPL API returned a permanent non-2xx error | No |
 
 ## Workflow: Making a Transfer
 
 1. Check your team: `fpl --json team --fields "name,position,price,form,status"`
 2. Find replacements: `fpl --json transfers suggest Watkins`
 3. Check if hit is worth it: `fpl --json transfers hit Watkins Isak`
-4. Dry-run the transfer: `fpl --json transfers execute Watkins Isak`
+4. Dry-run the transfer: `fpl --json transfers execute Watkins Isak` — note the returned `plan_id`
 5. Inspect the dry-run result — check for errors
-6. Confirm: `fpl --json transfers execute Watkins Isak --confirm`
-7. Verify: `fpl --json team` to confirm the change (returns `source: "live"` when logged in)
+6. Confirm with the exact `plan_id` from step 4: `fpl --json transfers execute Watkins Isak --confirm --plan-id <id>`
+7. If confirm fails with `STALE_PLAN`, your squad state changed since step 4 — go back to step 4 for a fresh `plan_id`
+8. Verify: `fpl --json team` to confirm the change (returns `source: "live"` when logged in)
 
 ## Workflow: Gameweek Prep
 

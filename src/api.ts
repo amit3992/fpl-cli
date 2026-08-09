@@ -8,6 +8,144 @@ const BASE_URL = "https://fantasy.premierleague.com/api";
 
 let bootstrapCache: Bootstrap | null = null;
 
+// --- Error taxonomy ---
+
+/**
+ * Stable error codes surfaced through the CLI's --json contract (see output.ts).
+ * AUTH_REQUIRED   — not authenticated (no token / auth rejected by FPL)
+ * NETWORK_ERROR   — fetch() rejected (DNS, connection refused, etc.) — retryable
+ * TIMEOUT         — request exceeded the client-side timeout — retryable
+ * RATE_LIMITED    — FPL API returned 429 — retryable
+ * API_ERROR       — FPL API returned a non-2xx status not covered above — not retryable
+ */
+export type ApiErrorCode = "AUTH_REQUIRED" | "NETWORK_ERROR" | "TIMEOUT" | "RATE_LIMITED" | "API_ERROR";
+
+export class ApiError extends Error {
+  readonly code: ApiErrorCode;
+  readonly status?: number;
+  readonly retryable: boolean;
+  /** Seconds to wait before retrying, from a 429's Retry-After header, when present. */
+  readonly retryAfterSeconds?: number;
+
+  constructor(code: ApiErrorCode, message: string, status?: number, retryAfterSeconds?: number) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+    this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
+    // 5xx API_ERROR is treated as transient (retryable); other 4xx API_ERROR is not.
+    this.retryable =
+      code === "NETWORK_ERROR" ||
+      code === "TIMEOUT" ||
+      code === "RATE_LIMITED" ||
+      (code === "API_ERROR" && (status ?? 0) >= 500);
+  }
+}
+
+function retryAfterFromResponse(resp: Response): number | undefined {
+  const header = resp.headers.get("Retry-After");
+  if (!header) return undefined;
+  const seconds = Number(header);
+  return Number.isFinite(seconds) ? seconds : undefined;
+}
+
+function classifyStatus(
+  path: string,
+  status: number,
+  statusText: string,
+  detail?: string,
+  retryAfterSeconds?: number,
+): ApiError {
+  const suffix = detail ? ` — ${detail}` : "";
+  if (status === 401 || status === 403) {
+    return new ApiError("AUTH_REQUIRED", "Not logged in or session expired. Run: fpl login", status);
+  }
+  if (status === 429) {
+    return new ApiError("RATE_LIMITED", `FPL API rate limit hit on ${path} (429).${suffix}`, status, retryAfterSeconds);
+  }
+  if (status >= 500) {
+    return new ApiError("API_ERROR", `FPL API ${path} unavailable: ${status} ${statusText}${suffix}`, status);
+  }
+  return new ApiError("API_ERROR", `FPL API ${path}: ${status} ${statusText}${suffix}`, status);
+}
+
+const DEFAULT_TIMEOUT_MS = 15_000;
+
+/**
+ * Runs a single HTTP request with a client-side timeout (AbortController). Used by every
+ * fetcher (reads and mutations alike) — bounding runtime is safe for all requests; only
+ * *retrying* is unsafe for mutations (see withRetry doc below).
+ */
+async function fetchSafe(
+  url: string,
+  init: RequestInit | undefined,
+  path: string,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    if (controller.signal.aborted) {
+      throw new ApiError("TIMEOUT", `Request to ${path} timed out after ${timeoutMs}ms`);
+    }
+    const message = e instanceof Error ? e.message : String(e);
+    throw new ApiError("NETWORK_ERROR", `Network error calling ${path}: ${message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const MAX_ATTEMPTS = 3;
+const BASE_DELAY_MS = 500;
+const BACKOFF_FACTOR = 2;
+const JITTER_RATIO = 0.25;
+
+function backoffDelay(attempt: number): number {
+  const base = BASE_DELAY_MS * Math.pow(BACKOFF_FACTOR, attempt);
+  const jitter = base * JITTER_RATIO * (Math.random() * 2 - 1);
+  return Math.max(0, Math.round(base + jitter));
+}
+
+/**
+ * Retries a *read-only, idempotent* request on transient failures: TIMEOUT, NETWORK_ERROR,
+ * RATE_LIMITED, and 5xx API_ERROR. Up to MAX_ATTEMPTS total attempts, exponential backoff
+ * with jitter, honoring a 429's Retry-After header when present.
+ *
+ * SAFETY: this is used by get()/authGet() (reads) ONLY. It MUST NOT be used to wrap authPost()
+ * (transfers, captain/vice-captain, chip mutations). If a POST fails with an ambiguous network
+ * outcome (TIMEOUT/NETWORK_ERROR), we cannot tell whether the mutation already landed
+ * server-side — blindly retrying risks double-submitting a transfer or chip activation.
+ * Mutation errors are surfaced as-is (with retryable: true where applicable) so the caller
+ * (human/agent) can check live state before deciding to retry manually.
+ */
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastError = e;
+      const isLastAttempt = attempt === MAX_ATTEMPTS - 1;
+      if (!(e instanceof ApiError) || !e.retryable || isLastAttempt) {
+        throw e;
+      }
+      const delayMs =
+        e.code === "RATE_LIMITED" && e.retryAfterSeconds !== undefined
+          ? e.retryAfterSeconds * 1000
+          : backoffDelay(attempt);
+      await sleep(delayMs);
+    }
+  }
+  throw lastError;
+}
+
 // --- Types ---
 
 export interface Player {
@@ -111,39 +249,52 @@ export interface Entry {
 
 // --- Fetchers ---
 
+// Read-only, idempotent — safe to retry.
 async function get<T>(path: string): Promise<T> {
-  const resp = await fetch(`${BASE_URL}${path}`);
-  if (!resp.ok) throw new Error(`FPL API ${path}: ${resp.status} ${resp.statusText}`);
-  return resp.json() as Promise<T>;
+  return withRetry(async () => {
+    const resp = await fetchSafe(`${BASE_URL}${path}`, undefined, path);
+    if (!resp.ok) throw classifyStatus(path, resp.status, resp.statusText, undefined, retryAfterFromResponse(resp));
+    return resp.json() as Promise<T>;
+  });
 }
 
+/**
+ * Fails closed: throws AUTH_REQUIRED if no access token is available, rather than
+ * sending an unauthenticated request to an endpoint that requires auth. Callers that
+ * need an authenticated-optional fallback (e.g. getLiveSquadState) must check
+ * getAccessToken() themselves before calling this.
+ */
+// Read-only, idempotent — safe to retry.
 async function authGet<T>(path: string): Promise<T> {
-  const token = await getAccessToken();
-  const headers: Record<string, string> = {};
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const resp = await fetch(`${BASE_URL}${path}`, { headers });
-  if (!resp.ok) throw new Error(`FPL API ${path}: ${resp.status} ${resp.statusText}`);
-  return resp.json() as Promise<T>;
+  return withRetry(async () => {
+    const token = await getAccessToken();
+    if (!token) throw new ApiError("AUTH_REQUIRED", "Not logged in. Run: fpl login");
+    const resp = await fetchSafe(`${BASE_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } }, path);
+    if (!resp.ok) throw classifyStatus(path, resp.status, resp.statusText, undefined, retryAfterFromResponse(resp));
+    return resp.json() as Promise<T>;
+  });
 }
 
+// MUTATION — single attempt, deliberately NOT wrapped in withRetry. A network error or
+// timeout mid-POST leaves the outcome ambiguous (the transfer/chip/lineup change may have
+// already landed at FPL); auto-retrying here risks double-submitting a mutation. The error
+// is surfaced as-is (retryable: true where applicable) so the caller can check live squad
+// state before deciding whether to retry manually. See withRetry's doc comment above.
 async function authPost<T>(path: string, payload: unknown): Promise<T> {
   const token = await getAccessToken();
+  if (!token) throw new ApiError("AUTH_REQUIRED", "Not logged in. Run: fpl login");
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "X-Requested-With": "XMLHttpRequest",
     "Referer": "https://fantasy.premierleague.com/",
     "Origin": "https://fantasy.premierleague.com",
+    "Authorization": `Bearer ${token}`,
   };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const resp = await fetch(`${BASE_URL}${path}`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-  });
+  const resp = await fetchSafe(`${BASE_URL}${path}`, { method: "POST", headers, body: JSON.stringify(payload) }, path);
   if (!resp.ok) {
     let detail = "";
-    try { detail = " — " + await resp.text(); } catch { /* ignore */ }
-    throw new Error(`FPL API POST ${path}: ${resp.status} ${resp.statusText}${detail}`);
+    try { detail = await resp.text(); } catch { /* ignore */ }
+    throw classifyStatus(path, resp.status, resp.statusText, detail || undefined, retryAfterFromResponse(resp));
   }
   const text = await resp.text();
   if (!text) return {} as T;

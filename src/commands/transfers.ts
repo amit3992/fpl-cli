@@ -5,6 +5,7 @@ import * as config from "../config.js";
 import { rankPlayersByPosition, calculateHitValue } from "../scoring.js";
 import { printJson, printError, makeTable } from "../output.js";
 import { sanitizePlayerName } from "../validate.js";
+import { computePlanId, computeSquadFingerprint } from "../plans.js";
 
 const POS = { 1: "GKP", 2: "DEF", 3: "MID", 4: "FWD" } as Record<number, string>;
 
@@ -13,6 +14,7 @@ interface TransferInput {
   in: string;
   confirm?: boolean;
   horizon?: number;
+  plan_id?: string;
 }
 
 function parseJsonInput(jsonStr: string, asJson: boolean): TransferInput {
@@ -117,12 +119,14 @@ export async function hitCommand(
 export async function executeCommand(
   playerOut: string, playerIn: string, confirm: boolean, asJson: boolean,
   jsonInput?: string,
+  planId?: string,
 ): Promise<void> {
   if (jsonInput) {
     const input = parseJsonInput(jsonInput, asJson);
     playerOut = input.out;
     playerIn = input.in;
     confirm = input.confirm ?? confirm;
+    planId = input.plan_id ?? planId;
   }
 
   playerOut = sanitizePlayerName(playerOut, asJson);
@@ -132,7 +136,11 @@ export async function executeCommand(
   if (!teamId) printError("FPL Team ID not configured. Run: fpl init", asJson);
 
   const token = await auth.getAccessToken();
-  if (!token) printError("Not logged in. Run: fpl login", asJson);
+  if (!token) printError("Not logged in. Run: fpl login", asJson, "AUTH_REQUIRED");
+
+  if (confirm && !planId) {
+    printError("Plan ID required. Run the dry-run first and pass --plan-id <id>.", asJson, "INPUT_ERROR");
+  }
 
   const pOut = await api.getPlayerByName(playerOut);
   const pIn = await api.getPlayerByName(playerIn);
@@ -140,6 +148,7 @@ export async function executeCommand(
   if (!pIn) printError(`Player not found: ${playerIn}`, asJson);
 
   const gameweek = await api.getNextGameweek();
+  const deadline = (await api.getNextDeadline()) ?? "";
   const squad = await api.getMySquad(teamId);
 
   let sellingPrice: number | undefined;
@@ -160,6 +169,16 @@ export async function executeCommand(
     selling_price: sellingPrice!,
   };
 
+  const armedChip = squad.chips.find((c) => c.status_for_entry === "active")?.name ?? null;
+  const squadFingerprint = computeSquadFingerprint(squad.picks, squad.transfers.bank, armedChip, gameweek, deadline);
+  const currentPlanId = computePlanId({
+    action: "transfer",
+    params: { element_out: pOut!.id, element_in: pIn!.id },
+    gameweek,
+    deadline,
+    squadFingerprint,
+  });
+
   if (!confirm) {
     const result = await api.makeTransfer({
       teamId, gameweek, transfers: [transfer], confirm: false,
@@ -171,6 +190,9 @@ export async function executeCommand(
       selling_price: sellingPrice! / 10,
       purchase_price: pIn!.now_cost / 10,
       validation: result,
+      plan_id: currentPlanId,
+      squad_fingerprint: squadFingerprint,
+      deadline: deadline || null,
     };
 
     if (asJson) { printJson(data); return; }
@@ -180,16 +202,25 @@ export async function executeCommand(
     console.log(`  OUT: ${pOut!.web_name} (£${(sellingPrice! / 10).toFixed(1)}m)`);
     console.log(`  IN:  ${pIn!.web_name} (£${(pIn!.now_cost / 10).toFixed(1)}m)`);
     console.log();
-    console.log(chalk.dim("  To confirm, re-run with --confirm"));
+    console.log(chalk.dim(`  Plan ID: ${currentPlanId}`));
+    console.log(chalk.dim(`  To confirm, re-run with --confirm --plan-id ${currentPlanId}`));
     console.log();
     return;
+  }
+
+  if (planId !== currentPlanId) {
+    printError(
+      "Plan is stale — squad state changed since the dry-run (price, picks, captain, chip, or deadline). Re-run the dry-run for a fresh plan_id.",
+      asJson,
+      "STALE_PLAN",
+    );
   }
 
   const result = await api.makeTransfer({
     teamId, gameweek, transfers: [transfer], confirm: true,
   });
 
-  const data = { mode: "confirmed", out: pOut!.web_name, in: pIn!.web_name, result };
+  const data = { mode: "confirmed", out: pOut!.web_name, in: pIn!.web_name, result, plan_id: currentPlanId };
 
   if (asJson) { printJson(data); return; }
   console.log(chalk.green("  Transfer confirmed!"));

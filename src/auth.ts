@@ -150,22 +150,37 @@ async function exchangeCode(code: string, verifier: string): Promise<Tokens> {
   return resp.json() as Promise<Tokens>;
 }
 
+const REFRESH_TIMEOUT_MS = 15_000;
+
+// Timeout only — no retry. Unlike the DaVinci login steps above (stateful, multi-step,
+// brittle — see AGENTS.md), a token refresh is a single idempotent POST with no side effect
+// on failure, so bounding its runtime is safe. It is not retried here: getAccessToken()'s
+// caller (api.ts's authGet/authPost) already treats a failed refresh as "not logged in" and
+// fails closed; a transient refresh failure surfaces as AUTH_REQUIRED rather than being
+// silently retried with a possibly-still-bad connection.
 async function refreshAccessToken(refreshToken: string): Promise<Tokens> {
   const body = new URLSearchParams({
     grant_type: "refresh_token",
     client_id: CLIENT_ID,
     refresh_token: refreshToken,
   });
-  const resp = await fetch(`${AUTH_BASE}/as/token`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Origin: "https://fantasy.premierleague.com",
-    },
-    body,
-  });
-  if (!resp.ok) throw new Error(`Token refresh failed: ${resp.status}`);
-  return resp.json() as Promise<Tokens>;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS);
+  try {
+    const resp = await fetch(`${AUTH_BASE}/as/token`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Origin: "https://fantasy.premierleague.com",
+      },
+      body,
+      signal: controller.signal,
+    });
+    if (!resp.ok) throw new Error(`Token refresh failed: ${resp.status}`);
+    return resp.json() as Promise<Tokens>;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function login(email: string, password: string): Promise<void> {

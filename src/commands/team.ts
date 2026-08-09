@@ -5,6 +5,7 @@ import * as config from "../config.js";
 import { printJson, printError, makeTable } from "../output.js";
 import { filterFields } from "../fields.js";
 import { sanitizePlayerName } from "../validate.js";
+import { computePlanId, computeSquadFingerprint } from "../plans.js";
 
 const POS = { 1: "GKP", 2: "DEF", 3: "MID", 4: "FWD" } as Record<number, string>;
 const STATUS = { a: "Available", d: "Doubtful", i: "Injured", s: "Suspended", u: "Unavailable" } as Record<string, string>;
@@ -18,6 +19,7 @@ const VALID_CHIPS = ["wildcard", "freehit", "bboost", "3xc", "none"];
 interface ChipInput {
   chip: string;
   confirm?: boolean;
+  plan_id?: string;
 }
 
 export async function teamCommand(asJson: boolean, fields?: string, gw?: number): Promise<void> {
@@ -89,11 +91,24 @@ export async function teamCommand(asJson: boolean, fields?: string, gw?: number)
   console.log(table.toString());
 }
 
-export async function captainCommand(playerName: string, vice: boolean, asJson: boolean): Promise<void> {
+export async function captainCommand(
+  playerName: string,
+  vice: boolean,
+  confirm: boolean,
+  asJson: boolean,
+  planId?: string,
+): Promise<void> {
   playerName = sanitizePlayerName(playerName, asJson);
 
   const teamId = config.get("FPL_TEAM_ID");
   if (!teamId) printError("FPL Team ID not configured. Run: fpl init", asJson);
+
+  const token = await auth.getAccessToken();
+  if (!token) printError("Not logged in. Run: fpl login", asJson, "AUTH_REQUIRED");
+
+  if (confirm && !planId) {
+    printError("Plan ID required. Run the dry-run first and pass --plan-id <id>.", asJson, "INPUT_ERROR");
+  }
 
   const player = await api.getPlayerByName(playerName);
   if (!player) printError(`Player not found: ${playerName}`, asJson);
@@ -103,6 +118,59 @@ export async function captainCommand(playerName: string, vice: boolean, asJson: 
 
   const inSquad = picks.find((p) => p.element === player!.id);
   if (!inSquad) printError(`${player!.web_name} is not in your squad.`, asJson);
+
+  const label = vice ? "vice-captain" : "captain";
+  const alreadySet = vice ? inSquad!.is_vice_captain : inSquad!.is_captain;
+
+  const bootstrap = await api.getBootstrap();
+  const elements = new Map(bootstrap.elements.map((p) => [p.id, p]));
+  const prevPick = picks.find((p) => (vice ? p.is_vice_captain : p.is_captain));
+  const previous =
+    prevPick && prevPick.element !== player!.id ? elements.get(prevPick.element)?.web_name ?? null : null;
+
+  const gameweek = await api.getNextGameweek();
+  const deadline = (await api.getNextDeadline()) ?? "";
+  const armedChip = myTeam.chips.find((c) => c.status_for_entry === "active")?.name ?? null;
+  const squadFingerprint = computeSquadFingerprint(picks, myTeam.transfers.bank, armedChip, gameweek, deadline);
+  const currentPlanId = computePlanId({
+    action: label,
+    params: { player_id: player!.id },
+    gameweek,
+    deadline,
+    squadFingerprint,
+  });
+
+  const data: Record<string, unknown> = {
+    mode: confirm ? "confirmed" : "dry_run",
+    action: label,
+    player: player!.web_name,
+    team_id: teamId,
+    previous,
+    already_set: alreadySet,
+    plan_id: currentPlanId,
+    squad_fingerprint: squadFingerprint,
+    deadline: deadline || null,
+  };
+
+  if (!confirm) {
+    if (asJson) { printJson(data); return; }
+    console.log();
+    console.log(chalk.bold(`  Set ${player!.web_name} as ${label} (dry run):`));
+    if (previous) console.log(chalk.dim(`  Currently: ${previous}`));
+    else if (alreadySet) console.log(chalk.dim(`  ${player!.web_name} is already ${label}.`));
+    console.log(chalk.dim(`  Plan ID: ${currentPlanId}`));
+    console.log(chalk.dim(`  Re-run with --confirm --plan-id ${currentPlanId} to apply.`));
+    console.log();
+    return;
+  }
+
+  if (planId !== currentPlanId) {
+    printError(
+      "Plan is stale — squad state changed since the dry-run (price, picks, captain, chip, or deadline). Re-run the dry-run for a fresh plan_id.",
+      asJson,
+      "STALE_PLAN",
+    );
+  }
 
   for (const pick of picks) {
     if (vice) {
@@ -114,9 +182,6 @@ export async function captainCommand(playerName: string, vice: boolean, asJson: 
 
   await api.updateMyTeam(teamId, picks);
 
-  const label = vice ? "vice-captain" : "captain";
-  const data = { [label]: player!.web_name, status: "confirmed" };
-
   if (asJson) { printJson(data); return; }
   console.log(chalk.green(`  ${player!.web_name} set as ${label}.`));
 }
@@ -126,6 +191,7 @@ export async function chipCommand(
   confirm: boolean,
   asJson: boolean,
   jsonInput?: string,
+  planId?: string,
 ): Promise<void> {
   if (jsonInput) {
     let parsed: ChipInput;
@@ -137,13 +203,18 @@ export async function chipCommand(
     if (!parsed!.chip) printError('JSON input must include "chip" field.', asJson);
     chipName = parsed!.chip;
     confirm = parsed!.confirm ?? confirm;
+    planId = parsed!.plan_id ?? planId;
   }
 
   const teamId = config.get("FPL_TEAM_ID");
   if (!teamId) printError("FPL Team ID not configured. Run: fpl init", asJson);
 
   const token = await auth.getAccessToken();
-  if (!token) printError("Not logged in. Run: fpl login", asJson);
+  if (!token) printError("Not logged in. Run: fpl login", asJson, "AUTH_REQUIRED");
+
+  if (confirm && !planId) {
+    printError("Plan ID required. Run the dry-run first and pass --plan-id <id>.", asJson, "INPUT_ERROR");
+  }
 
   const chip = chipName.toLowerCase();
   if (!VALID_CHIPS.includes(chip)) {
@@ -151,11 +222,11 @@ export async function chipCommand(
   }
 
   const myTeam = await api.getMySquad(teamId);
-  const deadline = await api.getNextDeadline();
+  const deadline = (await api.getNextDeadline()) ?? "";
   const gameweek = await api.getNextGameweek();
 
   if (chip === "none") {
-    return deactivateChip(teamId, myTeam, gameweek, deadline, confirm, asJson);
+    return deactivateChip(teamId, myTeam, gameweek, deadline, confirm, asJson, planId);
   }
 
   const status = myTeam.chips.find((c) => c.name === chip);
@@ -166,23 +237,44 @@ export async function chipCommand(
     );
   }
 
+  const armedChip = myTeam.chips.find((c) => c.status_for_entry === "active")?.name ?? null;
+  const squadFingerprint = computeSquadFingerprint(myTeam.picks, myTeam.transfers.bank, armedChip, gameweek, deadline);
+  const currentPlanId = computePlanId({
+    action: "chip_activate",
+    params: { chip },
+    gameweek,
+    deadline,
+    squadFingerprint,
+  });
+
   const data = {
     action: "activate",
     chip,
     chip_label: CHIP_NAMES[chip],
     mode: confirm ? "confirmed" : "dry_run",
     reversible: true,
-    deadline,
+    deadline: deadline || null,
+    plan_id: currentPlanId,
+    squad_fingerprint: squadFingerprint,
   };
 
   if (!confirm) {
     if (asJson) { printJson(data); return; }
     console.log();
     console.log(chalk.bold(`  Activate ${CHIP_NAMES[chip]} (dry run):`));
-    console.log(chalk.dim(`  Reversible until ${deadline ?? "GW deadline"} via: fpl chip none --confirm`));
-    console.log(chalk.dim("  Re-run with --confirm to activate."));
+    console.log(chalk.dim(`  Reversible until ${data.deadline ?? "GW deadline"} via: fpl chip none --confirm --plan-id <id>`));
+    console.log(chalk.dim(`  Plan ID: ${currentPlanId}`));
+    console.log(chalk.dim(`  Re-run with --confirm --plan-id ${currentPlanId} to activate.`));
     console.log();
     return;
+  }
+
+  if (planId !== currentPlanId) {
+    printError(
+      "Plan is stale — squad state changed since the dry-run (price, picks, captain, chip, or deadline). Re-run the dry-run for a fresh plan_id.",
+      asJson,
+      "STALE_PLAN",
+    );
   }
 
   if (LINEUP_CHIPS.has(chip)) {
@@ -206,29 +298,54 @@ export async function chipCommand(
 async function deactivateChip(
   teamId: string,
   myTeam: api.MyTeamData,
-  _gameweek: number,
-  deadline: string | null,
+  gameweek: number,
+  deadline: string,
   confirm: boolean,
   asJson: boolean,
+  planId?: string,
 ): Promise<void> {
   const active = myTeam.chips.find((c) => c.status_for_entry === "active");
   if (!active) printError("No active chip to deactivate.", asJson);
+
+  if (confirm && !planId) {
+    printError("Plan ID required. Run the dry-run first and pass --plan-id <id>.", asJson, "INPUT_ERROR");
+  }
+
+  const squadFingerprint = computeSquadFingerprint(myTeam.picks, myTeam.transfers.bank, active!.name, gameweek, deadline);
+  const currentPlanId = computePlanId({
+    action: "chip_deactivate",
+    params: { chip: active!.name },
+    gameweek,
+    deadline,
+    squadFingerprint,
+  });
 
   const data = {
     action: "deactivate",
     chip: active!.name,
     chip_label: CHIP_NAMES[active!.name] ?? active!.name,
     mode: confirm ? "confirmed" : "dry_run",
-    deadline,
+    deadline: deadline || null,
+    plan_id: currentPlanId,
+    squad_fingerprint: squadFingerprint,
   };
 
   if (!confirm) {
     if (asJson) { printJson(data); return; }
     console.log();
     console.log(chalk.bold(`  Deactivate ${data.chip_label} (dry run):`));
-    console.log(chalk.dim("  Re-run with --confirm to deactivate."));
+    console.log(chalk.dim(`  Plan ID: ${currentPlanId}`));
+    console.log(chalk.dim(`  Re-run with --confirm --plan-id ${currentPlanId} to deactivate.`));
     console.log();
     return;
+  }
+
+  if (planId !== currentPlanId) {
+    printError(
+      "Plan is stale — squad state changed since the dry-run (price, picks, captain, chip, or deadline). Re-run the dry-run for a fresh plan_id.",
+      asJson,
+      "STALE_PLAN",
+    );
   }
 
   await api.updateMyTeam(teamId, myTeam.picks, null);
