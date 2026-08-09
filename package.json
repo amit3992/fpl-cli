@@ -1,6 +1,6 @@
 {
   "name": "@amit3992/fpl-cli",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Command-line tool for Fantasy Premier League",
   "type": "module",
   "bin": {
