@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import * as api from "../api.js";
-import { printJson, printError, makeTable } from "../output.js";
+import { printJson, printError, makeTable, sanitizeText } from "../output.js";
 import { sanitizePlayerName } from "../validate.js";
 
 export async function fixturesCommand(playerName: string, gameweeks: number, asJson: boolean): Promise<void> {
@@ -19,13 +19,13 @@ export async function fixturesCommand(playerName: string, gameweeks: number, asJ
   for (const f of allFixtures) {
     if (upcoming.length >= gameweeks) break;
     if (f.team_h === teamId) {
-      upcoming.push({ gw: f.event, opponent: teams.get(f.team_a) ?? "???", home: true, difficulty: f.team_h_difficulty });
+      upcoming.push({ gw: f.event, opponent: sanitizeText(teams.get(f.team_a) ?? "???"), home: true, difficulty: f.team_h_difficulty });
     } else if (f.team_a === teamId) {
-      upcoming.push({ gw: f.event, opponent: teams.get(f.team_h) ?? "???", home: false, difficulty: f.team_a_difficulty });
+      upcoming.push({ gw: f.event, opponent: sanitizeText(teams.get(f.team_h) ?? "???"), home: false, difficulty: f.team_a_difficulty });
     }
   }
 
-  const data = { player: p!.web_name, team: teams.get(teamId) ?? "???", fixtures: upcoming };
+  const data = { player: sanitizeText(p!.web_name), team: sanitizeText(teams.get(teamId) ?? "???"), fixtures: upcoming };
 
   if (asJson) { printJson(data); return; }
 

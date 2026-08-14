@@ -21,7 +21,8 @@ export async function doctorCommand(asJson: boolean): Promise<void> {
   });
 
   const teamId = cfg.FPL_TEAM_ID ?? "";
-  checks.push({ check: "Team ID", ok: !!teamId, detail: teamId || "Not set" });
+  const teamIdOk = !!teamId && config.isValidTeamId(teamId);
+  checks.push({ check: "Team ID", ok: teamIdOk, detail: teamIdOk ? teamId : teamId ? "Invalid format (must be 1-10 digits)" : "Not set" });
 
   const hasCreds = !!(cfg.FPL_EMAIL && cfg.FPL_PASSWORD);
   const tokens = auth.loadTokens();

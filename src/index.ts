@@ -35,7 +35,7 @@ program.command("init")
   .description("Set up your FPL credentials")
   .option("--team-id <id>", "FPL Team ID (non-interactive)")
   .option("--email <email>", "FPL email (non-interactive)")
-  .option("--password <password>", "FPL password (non-interactive)")
+  .option("--password <password>", "FPL password (non-interactive; prefer FPL_PASSWORD env var)")
   .action((opts: { teamId?: string; email?: string; password?: string }) =>
     initCommand(opts, json()));
 
@@ -128,8 +128,13 @@ program.command("fixtures")
   .description("Show upcoming fixture difficulty for a player")
   .argument("<player>", "Player name")
   .option("-n, --gameweeks <n>", "Number of gameweeks", "5")
-  .action((player: string, opts: { gameweeks: string }) =>
-    fixturesCommand(player, parseInt(opts.gameweeks, 10), json()));
+  .action((player: string, opts: { gameweeks: string }) => {
+    const gameweeks = parseInt(opts.gameweeks, 10);
+    if (Number.isNaN(gameweeks) || gameweeks < 1 || gameweeks > 38) {
+      printError("--gameweeks must be an integer 1-38", json(), "INPUT_ERROR");
+    }
+    return fixturesCommand(player, gameweeks, json());
+  });
 
 const transfers = program.command("transfers")
   .description("Transfer analysis and execution");
@@ -150,7 +155,11 @@ transfers.command("hit")
     if (!opts.inputJson && (!playerOut || !playerIn)) {
       printError("provide player names or --input-json", json(), "INPUT_ERROR");
     }
-    return hitCommand(playerOut ?? "", playerIn ?? "", parseInt(opts.horizon, 10), json(), opts.inputJson);
+    const horizon = parseInt(opts.horizon, 10);
+    if (Number.isNaN(horizon) || horizon < 1 || horizon > 38) {
+      printError("--horizon must be an integer 1-38", json(), "INPUT_ERROR");
+    }
+    return hitCommand(playerOut ?? "", playerIn ?? "", horizon, json(), opts.inputJson);
   });
 
 transfers.command("execute")

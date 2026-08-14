@@ -46,7 +46,7 @@ export function loadTokens(): Tokens | null {
 function saveTokens(tokens: Tokens): void {
   cachedTokens = tokens;
   mkdirSync(CONFIG_DIR, { recursive: true });
-  writeFileSync(TOKEN_FILE, JSON.stringify(tokens, null, 2));
+  writeFileSync(TOKEN_FILE, JSON.stringify(tokens, null, 2), { mode: 0o600 });
   chmodSync(TOKEN_FILE, 0o600);
 }
 

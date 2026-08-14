@@ -1,7 +1,7 @@
 import chalk from "chalk";
 import * as api from "../api.js";
 import * as config from "../config.js";
-import { printJson, printError, makeTable } from "../output.js";
+import { printJson, printError, makeTable, sanitizeText } from "../output.js";
 import { filterFields } from "../fields.js";
 import { sanitizePlayerName } from "../validate.js";
 import { STATUS } from "../constants.js";
@@ -22,12 +22,12 @@ export async function newsCommand(
     const teams = new Map(bootstrap.teams.map((t) => [t.id, t.name]));
 
     const data = {
-      name: p!.web_name,
-      full_name: `${p!.first_name} ${p!.second_name}`,
-      team: teams.get(p!.team) ?? "???",
+      name: sanitizeText(p!.web_name),
+      full_name: sanitizeText(`${p!.first_name} ${p!.second_name}`),
+      team: sanitizeText(teams.get(p!.team) ?? "???"),
       status: STATUS[p!.status] ?? p!.status,
-      news: p!.news ?? "",
-      news_added: p!.news_added ?? "",
+      news: sanitizeText(p!.news ?? ""),
+      news_added: sanitizeText(p!.news_added ?? ""),
       chance_next_round: p!.chance_of_playing_next_round,
     };
 
@@ -43,8 +43,7 @@ export async function newsCommand(
   }
 
   // Squad-wide injury check
-  const teamId = config.get("FPL_TEAM_ID");
-  if (!teamId) printError("FPL Team ID not configured. Run: fpl init", asJson);
+  const teamId = config.getTeamId(asJson);
 
   const bootstrap = await api.getBootstrap();
   const elements = new Map(bootstrap.elements.map((p) => [p.id, p]));
@@ -53,10 +52,10 @@ export async function newsCommand(
   const items = state.picks.map((pick) => {
     const p = elements.get(pick.element)!;
     return {
-      name: p.web_name,
+      name: sanitizeText(p.web_name),
       status: STATUS[p.status] ?? p.status,
       status_code: p.status,
-      news: p.news ?? "",
+      news: sanitizeText(p.news ?? ""),
       chance_next_round: p.chance_of_playing_next_round,
     };
   });

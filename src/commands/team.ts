@@ -2,7 +2,7 @@ import chalk from "chalk";
 import * as api from "../api.js";
 import * as auth from "../auth.js";
 import * as config from "../config.js";
-import { printJson, printError, makeTable } from "../output.js";
+import { printJson, printError, makeTable, sanitizeText } from "../output.js";
 import { filterFields } from "../fields.js";
 import { sanitizePlayerName } from "../validate.js";
 import { computePlanId, computeSquadFingerprint } from "../plans.js";
@@ -26,8 +26,7 @@ const SLIM_TEAM_FIELDS = [
 ];
 
 export async function teamCommand(asJson: boolean, fields?: string, gw?: number, full = false): Promise<void> {
-  const teamId = config.get("FPL_TEAM_ID");
-  if (!teamId) printError("FPL Team ID not configured. Run: fpl init", asJson);
+  const teamId = config.getTeamId(asJson);
 
   const bootstrap = await api.getBootstrap();
   const elements = new Map(bootstrap.elements.map((p) => [p.id, p]));
@@ -54,9 +53,9 @@ export async function teamCommand(asJson: boolean, fields?: string, gw?: number,
   const squad = picks.map((pick) => {
     const p = elements.get(pick.element)!;
     return {
-      name: p.web_name,
+      name: sanitizeText(p.web_name),
       position: POS[p.element_type] ?? "???",
-      team: teams.get(p.team) ?? "???",
+      team: sanitizeText(teams.get(p.team) ?? "???"),
       price: p.now_cost / 10,
       form: parseFloat(p.form),
       ppg: parseFloat(p.points_per_game),
@@ -104,8 +103,7 @@ export async function captainCommand(
 ): Promise<void> {
   playerName = sanitizePlayerName(playerName, asJson);
 
-  const teamId = config.get("FPL_TEAM_ID");
-  if (!teamId) printError("FPL Team ID not configured. Run: fpl init", asJson);
+  const teamId = config.getTeamId(asJson);
 
   const token = await auth.getAccessToken();
   if (!token) printError("Not logged in. Run: fpl login", asJson, "AUTH_REQUIRED");
@@ -113,6 +111,8 @@ export async function captainCommand(
   if (confirm && !planId) {
     printError("Plan ID required. Run the dry-run first and pass --plan-id <id>.", asJson, "INPUT_ERROR");
   }
+
+  if (confirm) api.invalidateBootstrapCache();
 
   const player = await api.getPlayerByName(playerName);
   if (!player) printError(`Player not found: ${playerName}`, asJson);
@@ -204,14 +204,13 @@ export async function chipCommand(
     } catch {
       printError("Invalid JSON input.", asJson);
     }
-    if (!parsed!.chip) printError('JSON input must include "chip" field.', asJson);
+    if (typeof parsed!.chip !== "string") printError('JSON input must include a string "chip" field.', asJson, "INPUT_ERROR");
     chipName = parsed!.chip;
     confirm = parsed!.confirm ?? confirm;
     planId = parsed!.plan_id ?? planId;
   }
 
-  const teamId = config.get("FPL_TEAM_ID");
-  if (!teamId) printError("FPL Team ID not configured. Run: fpl init", asJson);
+  const teamId = config.getTeamId(asJson);
 
   const token = await auth.getAccessToken();
   if (!token) printError("Not logged in. Run: fpl login", asJson, "AUTH_REQUIRED");
@@ -219,6 +218,8 @@ export async function chipCommand(
   if (confirm && !planId) {
     printError("Plan ID required. Run the dry-run first and pass --plan-id <id>.", asJson, "INPUT_ERROR");
   }
+
+  if (confirm) api.invalidateBootstrapCache();
 
   const chip = chipName.toLowerCase();
   if (!VALID_CHIPS.includes(chip)) {
@@ -369,8 +370,7 @@ async function deactivateChip(
 }
 
 export async function budgetCommand(asJson: boolean, fields?: string): Promise<void> {
-  const teamId = config.get("FPL_TEAM_ID");
-  if (!teamId) printError("FPL Team ID not configured. Run: fpl init", asJson);
+  const teamId = config.getTeamId(asJson);
 
   const entry = await api.getEntry(teamId);
   const state = await api.getLiveSquadState(teamId);
@@ -391,7 +391,7 @@ export async function budgetCommand(asJson: boolean, fields?: string): Promise<v
   }
 
   const data = {
-    team_name: entry.name ?? "Unknown",
+    team_name: sanitizeText(entry.name ?? "Unknown"),
     bank: state.bank / 10,
     total_value: state.team_value / 10,
     overall_rank: entry.summary_overall_rank,
