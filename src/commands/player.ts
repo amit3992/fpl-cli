@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import * as api from "../api.js";
-import { printJson, printError, makeTable } from "../output.js";
+import { printJson, printError, makeTable, sanitizeText } from "../output.js";
 import { sanitizePlayerName } from "../validate.js";
 import { filterFields } from "../fields.js";
 import { POS, STATUS } from "../constants.js";
@@ -19,9 +19,9 @@ export async function playerCommand(name: string, asJson: boolean, fields?: stri
   const upcoming = summary.fixtures.slice(0, 5);
 
   const data = {
-    name: p!.web_name,
-    full_name: `${p!.first_name} ${p!.second_name}`,
-    team: teams.get(p!.team) ?? "???",
+    name: sanitizeText(p!.web_name),
+    full_name: sanitizeText(`${p!.first_name} ${p!.second_name}`),
+    team: sanitizeText(teams.get(p!.team) ?? "???"),
     position: POS[p!.element_type] ?? "???",
     price: p!.now_cost / 10,
     form: parseFloat(p!.form),
@@ -35,14 +35,14 @@ export async function playerCommand(name: string, asJson: boolean, fields?: stri
     xA: parseFloat(p!.expected_assists || "0"),
     selected_by: p!.selected_by_percent,
     status: STATUS[p!.status] ?? p!.status,
-    news: p!.news ?? "",
+    news: sanitizeText(p!.news ?? ""),
     recent_gameweeks: recent.map((h) => ({
       gw: h.round, pts: h.total_points, mins: h.minutes,
       goals: h.goals_scored, assists: h.assists,
     })),
     upcoming_fixtures: upcoming.map((f) => ({
       gw: f.event,
-      opponent: teams.get(f.is_home ? f.team_a : f.team_h) ?? "???",
+      opponent: sanitizeText(teams.get(f.is_home ? f.team_a : f.team_h) ?? "???"),
       home: f.is_home,
       difficulty: f.difficulty,
     })),

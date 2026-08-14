@@ -13,7 +13,7 @@ type Obj = Record<string, unknown>;
 function pickFields(obj: Obj, keys: string[]): Obj {
   const result: Obj = {};
   for (const key of keys) {
-    if (key in obj) result[key] = obj[key];
+    if (Object.hasOwn(obj, key)) result[key] = obj[key];
   }
   return result;
 }
@@ -59,11 +59,11 @@ export function filterFields<T>(data: T, fields?: string): T {
   const obj = data as Obj;
 
   for (const key of plainKeys) {
-    if (key in obj) result[key] = obj[key];
+    if (Object.hasOwn(obj, key)) result[key] = obj[key];
   }
 
   for (const [prefix, suffixes] of groups) {
-    if (prefix in obj) {
+    if (Object.hasOwn(obj, prefix)) {
       const value = obj[prefix];
       if (Array.isArray(value)) {
         result[prefix] = value.map((item) => pickFields(item as Obj, suffixes));

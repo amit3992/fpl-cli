@@ -32,6 +32,7 @@ function readBootstrapCache(): Bootstrap | null {
     const raw = readFileSync(BOOTSTRAP_CACHE_FILE, "utf-8");
     const parsed = JSON.parse(raw) as { cached_at?: number; data?: unknown };
     if (typeof parsed.cached_at !== "number") return null;
+    if (parsed.cached_at > Date.now()) return null;
     if (Date.now() - parsed.cached_at > BOOTSTRAP_CACHE_TTL_MS) return null;
     if (!isValidBootstrap(parsed.data)) return null;
     return parsed.data;
@@ -43,7 +44,7 @@ function readBootstrapCache(): Bootstrap | null {
 function writeBootstrapCache(data: Bootstrap): void {
   try {
     mkdirSync(CACHE_DIR, { recursive: true });
-    writeFileSync(BOOTSTRAP_CACHE_FILE, JSON.stringify({ cached_at: Date.now(), data }));
+    writeFileSync(BOOTSTRAP_CACHE_FILE, JSON.stringify({ cached_at: Date.now(), data }), { mode: 0o600 });
     chmodSync(BOOTSTRAP_CACHE_FILE, 0o600);
   } catch {
     // Cache write is best-effort; ignore IO errors.
@@ -337,6 +338,7 @@ async function authPost<T>(path: string, payload: unknown): Promise<T> {
   if (!resp.ok) {
     let detail = "";
     try { detail = await resp.text(); } catch { /* ignore */ }
+    detail = detail.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 500);
     throw classifyStatus(path, resp.status, resp.statusText, detail || undefined, retryAfterFromResponse(resp));
   }
   const text = await resp.text();

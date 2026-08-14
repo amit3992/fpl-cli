@@ -5,11 +5,11 @@ import { printJson, printError } from "../output.js";
 
 export async function loginCommand(asJson: boolean): Promise<void> {
   const cfg = config.load();
-  const email = cfg.FPL_EMAIL;
-  const password = cfg.FPL_PASSWORD;
+  const email = process.env.FPL_EMAIL || cfg.FPL_EMAIL;
+  const password = process.env.FPL_PASSWORD || cfg.FPL_PASSWORD;
 
   if (!email || !password) {
-    printError("FPL_EMAIL and FPL_PASSWORD not configured. Run: fpl init", asJson);
+    printError("FPL credentials not found. Set FPL_EMAIL/FPL_PASSWORD env vars or run: fpl init", asJson);
   }
 
   const token = await auth.getAccessToken();

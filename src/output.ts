@@ -61,6 +61,13 @@ export function printError(
   process.exit(EXIT_CODES[code]);
 }
 
+/** Strip control characters from untrusted API-sourced text before display.
+ *  Removes [\x00-\x1f\x7f] except \n (preserved for multi-line news). */
+const UNSAFE_CHARS = /[\x00-\x09\x0b-\x1f\x7f]/g;
+export function sanitizeText(value: string): string {
+  return value.replace(UNSAFE_CHARS, "");
+}
+
 export function makeTable(head: string[], colWidths?: number[]): Table.Table {
   const opts: Table.TableConstructorOptions = {
     head: head.map((h) => chalk.cyan.bold(h)),

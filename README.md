@@ -30,6 +30,14 @@ fpl init
 fpl init --team-id 123456 --email user@example.com --password secret
 ```
 
+Prefer the `FPL_EMAIL`/`FPL_PASSWORD` env vars for non-interactive auth — they are read by both `fpl init` and `fpl login`, and are never written to `config.json`:
+
+```bash
+FPL_EMAIL=user@example.com FPL_PASSWORD=secret fpl login
+```
+
+> **Warning:** `--password` exposes the secret in process listings and shell history. Prefer `FPL_PASSWORD`.
+
 You'll be prompted for:
 - **FPL Team ID** (required) — find it at `fantasy.premierleague.com/entry/XXXXXXX/`
 - **FPL Email & Password** (optional) — only needed for executing transfers

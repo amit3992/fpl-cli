@@ -3,7 +3,7 @@ import * as api from "../api.js";
 import * as auth from "../auth.js";
 import * as config from "../config.js";
 import { rankPlayersByPosition, calculateHitValue } from "../scoring.js";
-import { printJson, printError, makeTable } from "../output.js";
+import { printJson, printError, makeTable, sanitizeText } from "../output.js";
 import { filterFields } from "../fields.js";
 import { sanitizePlayerName } from "../validate.js";
 import { computePlanId, computeSquadFingerprint } from "../plans.js";
@@ -18,22 +18,32 @@ interface TransferInput {
 }
 
 function parseJsonInput(jsonStr: string, asJson: boolean): TransferInput {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(jsonStr);
-    if (!parsed.out || !parsed.in) {
-      printError('JSON input must include "out" and "in" fields.', asJson);
-    }
-    return parsed as TransferInput;
+    parsed = JSON.parse(jsonStr);
   } catch {
     printError("Invalid JSON input.", asJson);
   }
+  const obj = (typeof parsed === "object" && parsed !== null ? parsed : {}) as Record<string, unknown>;
+  if (typeof obj.out !== "string" || typeof obj.in !== "string") {
+    printError('"out" and "in" must be strings.', asJson, "INPUT_ERROR");
+  }
+  if (obj.horizon !== undefined && !(Number.isInteger(obj.horizon) && (obj.horizon as number) >= 1 && (obj.horizon as number) <= 38)) {
+    printError('"horizon" must be an integer 1-38.', asJson, "INPUT_ERROR");
+  }
+  return {
+    out: obj.out as string,
+    in: obj.in as string,
+    confirm: typeof obj.confirm === "boolean" ? obj.confirm : undefined,
+    horizon: typeof obj.horizon === "number" ? (obj.horizon as number) : undefined,
+    plan_id: typeof obj.plan_id === "string" ? obj.plan_id : undefined,
+  };
 }
 
 export async function suggestCommand(playerName: string, asJson: boolean, fields?: string): Promise<void> {
   playerName = sanitizePlayerName(playerName, asJson);
 
-  const teamId = config.get("FPL_TEAM_ID");
-  if (!teamId) printError("FPL Team ID not configured. Run: fpl init", asJson);
+  const teamId = config.getTeamId(asJson);
 
   const playerOut = await api.getPlayerByName(playerName);
   if (!playerOut) printError(`Player not found: ${playerName}`, asJson);
@@ -55,12 +65,12 @@ export async function suggestCommand(playerName: string, asJson: boolean, fields
   const ranked = rankPlayersByPosition(candidates, position, fixtures).slice(0, 5);
 
   const data = {
-    player_out: { name: playerOut!.web_name, position: POS[position] ?? "???", price: playerOut!.now_cost / 10 },
+    player_out: { name: sanitizeText(playerOut!.web_name), position: POS[position] ?? "???", price: playerOut!.now_cost / 10 },
     budget: budget / 10,
     source: state.source,
     caveat: state.caveat ?? undefined,
     recommendations: ranked.map((p) => ({
-      name: p.web_name, team: teams.get(p.team) ?? "???",
+      name: sanitizeText(p.web_name), team: sanitizeText(teams.get(p.team) ?? "???"),
       price: p.now_cost / 10, form: parseFloat(p.form),
       ppg: parseFloat(p.points_per_game), score: Math.round(p.composite_score * 100) / 100,
     })),
@@ -132,8 +142,7 @@ export async function executeCommand(
   playerOut = sanitizePlayerName(playerOut, asJson);
   playerIn = sanitizePlayerName(playerIn, asJson);
 
-  const teamId = config.get("FPL_TEAM_ID");
-  if (!teamId) printError("FPL Team ID not configured. Run: fpl init", asJson);
+  const teamId = config.getTeamId(asJson);
 
   const token = await auth.getAccessToken();
   if (!token) printError("Not logged in. Run: fpl login", asJson, "AUTH_REQUIRED");
@@ -141,6 +150,8 @@ export async function executeCommand(
   if (confirm && !planId) {
     printError("Plan ID required. Run the dry-run first and pass --plan-id <id>.", asJson, "INPUT_ERROR");
   }
+
+  if (confirm) api.invalidateBootstrapCache();
 
   const pOut = await api.getPlayerByName(playerOut);
   const pIn = await api.getPlayerByName(playerIn);
@@ -173,7 +184,12 @@ export async function executeCommand(
   const squadFingerprint = computeSquadFingerprint(squad.picks, squad.transfers.bank, armedChip, gameweek, deadline);
   const currentPlanId = computePlanId({
     action: "transfer",
-    params: { element_out: pOut!.id, element_in: pIn!.id },
+    params: {
+      element_out: pOut!.id,
+      element_in: pIn!.id,
+      purchase_price: pIn!.now_cost,      // integer ×10, raw API units
+      selling_price: sellingPrice!,       // integer ×10, raw API units
+    },
     gameweek,
     deadline,
     squadFingerprint,
@@ -186,7 +202,7 @@ export async function executeCommand(
 
     const data = {
       mode: "dry_run",
-      out: pOut!.web_name, in: pIn!.web_name,
+      out: sanitizeText(pOut!.web_name), in: sanitizeText(pIn!.web_name),
       selling_price: sellingPrice! / 10,
       purchase_price: pIn!.now_cost / 10,
       validation: result,
@@ -199,8 +215,8 @@ export async function executeCommand(
 
     console.log();
     console.log(chalk.bold("  Transfer validated (dry run):"));
-    console.log(`  OUT: ${pOut!.web_name} (£${(sellingPrice! / 10).toFixed(1)}m)`);
-    console.log(`  IN:  ${pIn!.web_name} (£${(pIn!.now_cost / 10).toFixed(1)}m)`);
+    console.log(`  OUT: ${sanitizeText(pOut!.web_name)} (£${(sellingPrice! / 10).toFixed(1)}m)`);
+    console.log(`  IN:  ${sanitizeText(pIn!.web_name)} (£${(pIn!.now_cost / 10).toFixed(1)}m)`);
     console.log();
     console.log(chalk.dim(`  Plan ID: ${currentPlanId}`));
     console.log(chalk.dim(`  To confirm, re-run with --confirm --plan-id ${currentPlanId}`));
@@ -220,7 +236,7 @@ export async function executeCommand(
     teamId, gameweek, transfers: [transfer], confirm: true,
   });
 
-  const data = { mode: "confirmed", out: pOut!.web_name, in: pIn!.web_name, result, plan_id: currentPlanId };
+  const data = { mode: "confirmed", out: sanitizeText(pOut!.web_name), in: sanitizeText(pIn!.web_name), result, plan_id: currentPlanId };
 
   if (asJson) { printJson(data); return; }
   console.log(chalk.green("  Transfer confirmed!"));
